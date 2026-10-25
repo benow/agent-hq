@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/AgentHQ.Api/AgentHQ.Api.csproj" />
+    <Project Path="src/AgentHQ.Commands.ZCode/AgentHQ.Commands.ZCode.csproj" />
+    <Project Path="src/AgentHQ.Core/AgentHQ.Core.csproj" />
+    <Project Path="src/AgentHQ.Infrastructure/AgentHQ.Infrastructure.csproj" />
+    <Project Path="src/AgentHQ.Providers.ZCode/AgentHQ.Providers.ZCode.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/AgentHQ.Tests/AgentHQ.Tests.csproj" />
+  </Folder>
+</Solution>

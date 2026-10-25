@@ -1,0 +1,81 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  # Self-hosted runner labels. The deploy target is the same machine as the runner, so the
+  # deploy job runs locally rather than over ssh. Once the runner exists, set repo variable
+  # RUNNER_LABELS (JSON, e.g. ["self-hosted","agent-hq"]) and RUNNER_ENABLED=true; until
+  # then every job is skipped, so a push to main does not queue forever waiting for a runner.
+  RUNNER_LABELS: ${{ vars.RUNNER_LABELS || '["self-hosted"]' }}
+
+jobs:
+  build-and-test:
+    if: vars.RUNNER_ENABLED == 'true'
+    runs-on: ${{ fromJSON(env.RUNNER_LABELS) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet restore
+      - run: dotnet build --no-restore
+      # The suite boots real FileSystemWatchers, SQLite files and SSE streams in parallel. On
+      # this machine the .NET 10 test harness occasionally aborts before any test runs
+      # (CLR 0x80131506, no test output, tends to be the first run after a build). A single
+      # retry tells that apart from a real failure; a genuine failing test fails both times.
+      - run: |
+          dotnet test --no-build || {
+            echo "::warning::test run aborted or failed; retrying once"
+            dotnet test --no-build
+          }
+        env:
+          # Live smoke stays off on the runner unless explicitly enabled per run.
+          AGENTHQ_LIVE: '0'
+
+  publish:
+    if: vars.RUNNER_ENABLED == 'true'
+    needs: build-and-test
+    runs-on: ${{ fromJSON(env.RUNNER_LABELS) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      # wwwroot/ and Commands/ are publish assets of AgentHQ.Api itself (see its csproj);
+      # no extra copy step. PDBs in the artifact are harmless — deploy drops them.
+      - run: dotnet publish src/AgentHQ.Api -c Release -r linux-x64 --self-contained -p:PublishSingleFile=true -o artifacts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent-hq-binary
+          path: artifacts/
+
+  deploy:
+    if: vars.RUNNER_ENABLED == 'true'
+    needs: publish
+    runs-on: ${{ fromJSON(env.RUNNER_LABELS) }}
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: agent-hq-binary
+          path: artifacts
+      # One deploy path, used by hand and by CI alike: stop → symlink switch → start →
+      # health (rolls back to the previous release on failure) → prune old releases.
+      - name: deploy
+        run: STAGE_DIR="$PWD/artifacts" bash scripts/agent-hq-deploy.sh
+      - name: verify
+        run: bash scripts/agent-hq-deploy.sh check

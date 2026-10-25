@@ -1,0 +1,42 @@
+{
+  "version": 2,
+  "dgSpecHash": "9QF9mX4rPBY=",
+  "success": true,
+  "projectFilePath": "/home/andy/Projects/dev-bridge/src/AgentHQ.Api/AgentHQ.Api.csproj",
+  "expectedPackageFiles": [
+    "/home/andy/.nuget/packages/dapper/2.1.66/dapper.2.1.66.nupkg.sha512",
+    "/home/andy/.nuget/packages/dbup-core/6.0.4/dbup-core.6.0.4.nupkg.sha512",
+    "/home/andy/.nuget/packages/dbup-sqlite/6.0.1/dbup-sqlite.6.0.1.nupkg.sha512",
+    "/home/andy/.nuget/packages/microsoft.data.sqlite/10.0.0/microsoft.data.sqlite.10.0.0.nupkg.sha512",
+    "/home/andy/.nuget/packages/microsoft.data.sqlite.core/10.0.0/microsoft.data.sqlite.core.10.0.0.nupkg.sha512",
+    "/home/andy/.nuget/packages/microsoft.extensions.ai.abstractions/10.11.0/microsoft.extensions.ai.abstractions.10.11.0.nupkg.sha512",
+    "/home/andy/.nuget/packages/microsoft.extensions.hosting.systemd/10.0.0/microsoft.extensions.hosting.systemd.10.0.0.nupkg.sha512",
+    "/home/andy/.nuget/packages/modelcontextprotocol/2.3.0/modelcontextprotocol.2.3.0.nupkg.sha512",
+    "/home/andy/.nuget/packages/modelcontextprotocol.aspnetcore/2.3.0/modelcontextprotocol.aspnetcore.2.3.0.nupkg.sha512",
+    "/home/andy/.nuget/packages/modelcontextprotocol.core/2.3.0/modelcontextprotocol.core.2.3.0.nupkg.sha512",
+    "/home/andy/.nuget/packages/serilog/4.2.0/serilog.4.2.0.nupkg.sha512",
+    "/home/andy/.nuget/packages/serilog.extensions.hosting/9.0.0/serilog.extensions.hosting.9.0.0.nupkg.sha512",
+    "/home/andy/.nuget/packages/serilog.extensions.logging/9.0.0/serilog.extensions.logging.9.0.0.nupkg.sha512",
+    "/home/andy/.nuget/packages/serilog.sinks.console/6.0.0/serilog.sinks.console.6.0.0.nupkg.sha512",
+    "/home/andy/.nuget/packages/serilog.sinks.file/6.0.0/serilog.sinks.file.6.0.0.nupkg.sha512",
+    "/home/andy/.nuget/packages/sourcegear.sqlite3/3.50.4.2/sourcegear.sqlite3.3.50.4.2.nupkg.sha512",
+    "/home/andy/.nuget/packages/sqlitepclraw.bundle_e_sqlite3/3.0.2/sqlitepclraw.bundle_e_sqlite3.3.0.2.nupkg.sha512",
+    "/home/andy/.nuget/packages/sqlitepclraw.config.e_sqlite3/3.0.2/sqlitepclraw.config.e_sqlite3.3.0.2.nupkg.sha512",
+    "/home/andy/.nuget/packages/sqlitepclraw.core/3.0.2/sqlitepclraw.core.3.0.2.nupkg.sha512",
+    "/home/andy/.nuget/packages/sqlitepclraw.provider.e_sqlite3/3.0.2/sqlitepclraw.provider.e_sqlite3.3.0.2.nupkg.sha512"
+  ],
+  "logs": [
+    {
+      "code": "NU1603",
+      "level": "Warning",
+      "message": "AgentHQ.Infrastructure depends on dbup-sqlite (>= 6.0.0) but dbup-sqlite 6.0.0 was not found. dbup-sqlite 6.0.1 was resolved instead.",
+      "projectPath": "/home/andy/Projects/dev-bridge/src/AgentHQ.Api/AgentHQ.Api.csproj",
+      "warningLevel": 1,
+      "filePath": "/home/andy/Projects/dev-bridge/src/AgentHQ.Api/AgentHQ.Api.csproj",
+      "libraryId": "dbup-sqlite",
+      "targetGraphs": [
+        "net10.0"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+# The previous name's unit (dev-bridge, before the Agent HQ rename on 2026-10-24). Kept so it
+# can be restored: its state lives in ~/.local/share/dev-bridge, which the rename left alone.
+# To go back: systemctl --user stop agent-hq
+#             install -m 644 ops/dev-bridge.service.retired ~/.config/systemd/user/dev-bridge.service
+#             systemctl --user daemon-reload && systemctl --user enable --now dev-bridge
+#
+# (Original file follows, unchanged.)
+[Unit]
+Description=dev-bridge — development manager bridge (OpenClaw ↔ ZCode)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.local/share/dev-bridge
+ExecStart=%h/.local/share/dev-bridge/current/DevBridge.Api
+Environment=DEVBRIDGE_PORT=5317
+Environment=DOTNET_NOLOGO=1
+Environment=DEVBRIDGE_LOG_ASPNET=Warning
+Restart=always
+RestartSec=2
+TimeoutStopSec=10
+KillSignal=SIGINT
+SyslogIdentifier=dev-bridge
+
+[Install]
+WantedBy=default.target

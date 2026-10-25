@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="10.0.0" />
+    <PackageReference Include="ModelContextProtocol" Version="2.3.0" />
+    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="2.3.0" />
+    <PackageReference Include="Serilog" Version="4.2.0" />
+    <PackageReference Include="Serilog.Extensions.Hosting" Version="9.0.0" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
+    <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.0" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.2" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../AgentHQ.Core/AgentHQ.Core.csproj" />
+    <ProjectReference Include="../AgentHQ.Infrastructure/AgentHQ.Infrastructure.csproj" />
+    <ProjectReference Include="../AgentHQ.Providers.ZCode/AgentHQ.Providers.ZCode.csproj" />
+    <ProjectReference Include="../AgentHQ.Commands.ZCode/AgentHQ.Commands.ZCode.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The command pack is a runtime asset: the installer copies it from BaseDirectory/Commands. -->
+    <Content Include="../AgentHQ.Commands.ZCode/Commands/**/*.md" Link="Commands/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <!-- The web UI travels with the assembly so the in-memory test host serves the real assets. -->
+    <Content Update="wwwroot/**/*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent HQ</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="ui.css">
+</head>
+<body>
+  <header id="topbar">
+    <div class="brand">
+      <span class="logo">AH</span>
+      <span>Agent HQ</span>
+    </div>
+    <div class="health" id="health" title="service health">
+      <span class="dot" id="health-dot"></span>
+      <span id="health-text">connecting…</span>
+    </div>
+    <div class="conn" id="conn" title="event stream">
+      <span class="dot" id="conn-dot"></span>
+      <span id="conn-text">events: idle</span>
+      <span class="seq" id="conn-seq">seq 0</span>
+    </div>
+    <div class="spacer"></div>
+    <button id="btn-activity" class="btn" aria-expanded="false" aria-controls="activity-panel">
+      Activity <span id="activity-count" class="count-badge hidden">0</span>
+    </button>
+    <button id="btn-submit" class="btn primary">Submit plan</button>
+    <button id="btn-repos" class="btn">Repositories</button>
+  </header>
+
+  <main>
+    <section id="board" aria-label="Plans">
+      <div class="filters" id="filters">
+        <select id="filter-status" aria-label="Filter by status">
+          <option value="">All statuses</option>
+          <option value="__queue_implemented">Verification queue</option>
+          <option value="fixing">Fixing (rework)</option>
+          <option value="submitted">Submitted</option>
+          <option value="refining">Refining</option>
+          <option value="in_review">In review</option>
+          <option value="implementing">Implementing</option>
+          <option value="implemented">Implemented</option>
+          <option value="verifying">Verifying</option>
+          <option value="verified">Verified</option>
+          <option value="done">Done</option>
+          <option value="deferred">Deferred</option>
+          <option value="abandoned">Abandoned</option>
+        </select>
+        <button class="chip" data-filter="ready">Ready</button>
+        <button class="chip" data-filter="blocked">Blocked</button>
+        <select id="repo-filter" aria-label="Repository filter"><option value="">All repositories</option></select>
+        <input id="search" type="search" placeholder="Search plans…" aria-label="Search plans">
+        <span class="spacer"></span>
+        <span id="result-count" class="muted"></span>
+      </div>
+      <div id="table-wrap" class="table-wrap">
+        <table id="plans-table" class="plans">
+          <thead>
+            <tr>
+              <th data-sort="name" class="col-name">Plan</th>
+              <th data-sort="status" class="col-status">Status</th>
+              <th data-sort="blocked" class="col-blocked">Blocked</th>
+              <th data-sort="progress" class="col-progress">Steps</th>
+              <th data-sort="priority" class="col-priority num">Priority</th>
+              <th data-sort="session" class="col-session">Session</th>
+              <th data-sort="updated" class="col-updated">Updated</th>
+            </tr>
+          </thead>
+          <tbody id="plans-body"></tbody>
+        </table>
+        <div id="empty" class="empty hidden">No plans match. Submit one, or run the demo seed script.</div>
+      </div>
+    </section>
+
+    <aside id="activity-panel" class="activity-panel hidden" aria-label="Activity" aria-hidden="true">
+      <div class="panel-head">
+        <h2>Activity</h2>
+        <div class="panel-actions">
+          <button id="btn-clear" class="btn tiny">clear</button>
+          <button id="btn-close-activity" class="btn icon" aria-label="Close activity">✕</button>
+        </div>
+      </div>
+      <div class="panel-scroll">
+        <ol id="activity-list" class="timeline"></ol>
+        <div class="panel-head sub"><h2>Recent sessions</h2></div>
+        <ul id="sessions" class="sessions"></ul>
+      </div>
+    </aside>
+  </main>
+
+  <div id="scrim" class="scrim hidden"></div>
+
+  <div id="drawer" class="drawer hidden" role="dialog" aria-modal="true" aria-labelledby="d-name">
+    <div class="drawer-head">
+      <div>
+        <h2 id="d-name"></h2>
+        <div class="muted" id="d-meta"></div>
+      </div>
+      <button id="btn-close-drawer" class="btn icon" aria-label="Close">✕</button>
+    </div>
+    <div class="drawer-body">
+      <div class="drawer-main">
+        <div class="tabs" role="tablist">
+          <button class="tab active" data-tab="content">Plan</button>
+          <button class="tab" data-tab="history">History</button>
+        </div>
+        <article id="d-content" class="markdown"></article>
+        <div id="d-history" class="history hidden"></div>
+      </div>
+      <div class="drawer-side">
+        <h3>Actions</h3>
+        <div id="d-actions" class="actions"></div>
+        <div id="d-warnings" class="warnings hidden"></div>
+        <h3>Blocked</h3>
+        <div id="d-block" class="blockbox"></div>
+        <h3>Priority</h3>
+        <form id="priority-form" class="inline">
+          <input id="d-priority" type="number" step="1" aria-label="Priority">
+          <button class="btn tiny" type="submit">Set</button>
+        </form>
+        <h3>Dependencies</h3>
+        <ul id="d-deps" class="deps"></ul>
+      </div>
+    </div>
+  </div>
+
+  <dialog id="submit-dialog">
+    <form id="submit-form" method="dialog">
+      <h2>Submit plan</h2>
+      <label>Repository
+        <select id="s-repo" name="repo" required></select>
+      </label>
+      <label>Name
+        <input id="s-name" name="name" required maxlength="120" placeholder="Short, verb-first">
+      </label>
+      <label>Markdown
+        <textarea id="s-markdown" name="markdown" rows="14" spellcheck="false"></textarea>
+      </label>
+      <p class="hint">Sections used by Agent HQ: Goal, Context, Steps (checkboxes),
+        Dependencies, Verification Criteria, Documentation, Status Log.</p>
+      <div id="s-warnings" class="warnings hidden"></div>
+      <div class="dialog-actions">
+        <button type="button" class="btn" id="btn-cancel-submit">Cancel</button>
+        <button type="submit" class="btn primary" id="btn-do-submit">Submit</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="repos-dialog">
+    <form id="repo-form" method="dialog">
+      <h2>Repositories</h2>
+      <ul id="repo-list" class="repos"></ul>
+      <label>Register a repository
+        <input id="r-path" name="rootPath" placeholder="/home/andy/Projects/my-project" required>
+      </label>
+      <label class="check"><input type="checkbox" id="r-default"> make default</label>
+      <div class="dialog-actions">
+        <button type="button" class="btn" id="btn-cancel-repo">Close</button>
+        <button type="submit" class="btn primary">Register</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast hidden" role="status"></div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

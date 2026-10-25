@@ -1,0 +1,15 @@
+/home/andy/Projects/dev-bridge/src/AgentHQ.Infrastructure/bin/Release/net10.0/AgentHQ.Infrastructure.deps.json
+/home/andy/Projects/dev-bridge/src/AgentHQ.Infrastructure/bin/Release/net10.0/AgentHQ.Infrastructure.dll
+/home/andy/Projects/dev-bridge/src/AgentHQ.Infrastructure/bin/Release/net10.0/AgentHQ.Infrastructure.pdb
+/home/andy/Projects/dev-bridge/src/AgentHQ.Infrastructure/bin/Release/net10.0/AgentHQ.Core.dll
+/home/andy/Projects/dev-bridge/src/AgentHQ.Infrastructure/bin/Release/net10.0/AgentHQ.Core.pdb
+/home/andy/Projects/dev-bridge/src/AgentHQ.Infrastructure/obj/Release/net10.0/AgentHQ.Infrastructure.csproj.AssemblyReference.cache
+/home/andy/Projects/dev-bridge/src/AgentHQ.Infrastructure/obj/Release/net10.0/AgentHQ.Infrastructure.GeneratedMSBuildEditorConfig.editorconfig
+/home/andy/Projects/dev-bridge/src/AgentHQ.Infrastructure/obj/Release/net10.0/AgentHQ.Infrastructure.AssemblyInfoInputs.cache
+/home/andy/Projects/dev-bridge/src/AgentHQ.Infrastructure/obj/Release/net10.0/AgentHQ.Infrastructure.AssemblyInfo.cs
+/home/andy/Projects/dev-bridge/src/AgentHQ.Infrastructure/obj/Release/net10.0/AgentHQ.Infrastructure.csproj.CoreCompileInputs.cache
+/home/andy/Projects/dev-bridge/src/AgentHQ.Infrastructure/obj/Release/net10.0/AgentHQ..ECFEC511.Up2Date
+/home/andy/Projects/dev-bridge/src/AgentHQ.Infrastructure/obj/Release/net10.0/AgentHQ.Infrastructure.dll
+/home/andy/Projects/dev-bridge/src/AgentHQ.Infrastructure/obj/Release/net10.0/refint/AgentHQ.Infrastructure.dll
+/home/andy/Projects/dev-bridge/src/AgentHQ.Infrastructure/obj/Release/net10.0/AgentHQ.Infrastructure.pdb
+/home/andy/Projects/dev-bridge/src/AgentHQ.Infrastructure/obj/Release/net10.0/ref/AgentHQ.Infrastructure.dll

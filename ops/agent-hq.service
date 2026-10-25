@@ -1,0 +1,26 @@
+[Unit]
+Description=Agent HQ — local hub for agent-managed work (OpenClaw ↔ ZCode)
+After=network.target
+
+[Service]
+Type=simple
+# Releases are switched by swapping the `current` symlink (scripts/agent-hq-deploy.sh);
+# the database and logs live one level up, in %h/.local/share/agent-hq. No ExecStartPre
+# and no shell: this is a single file with its assets next to it.
+WorkingDirectory=%h/.local/share/agent-hq
+ExecStart=%h/.local/share/agent-hq/current/AgentHQ.Api
+Environment=AGENTHQ_PORT=5317
+Environment=DOTNET_NOLOGO=1
+# Framework logs are verbosity, not configuration: this keeps per-request ASP.NET lines out of
+# the journal while endpoint errors still show. Override with AGENTHQ_LOG_ASPNET if needed.
+Environment=AGENTHQ_LOG_ASPNET=Warning
+# Always restart — a crashed hub should come back on its own. systemd's start-rate limit
+# (5 starts / 10s) keeps a crash loop from spinning.
+Restart=always
+RestartSec=2
+TimeoutStopSec=10
+KillSignal=SIGINT
+SyslogIdentifier=agent-hq
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Include="Dapper" Version="2.1.66" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.0.1" />
+    <PackageReference Include="Moq" Version="4.20.72" />
+    <PackageReference Include="Microsoft.AspNetCore.TestHost" Version="10.0.13" />
+    <PackageReference Include="Xunit.SkippableFact" Version="1.4.13" />
+    <PackageReference Include="ModelContextProtocol" Version="2.3.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/AgentHQ.Api/AgentHQ.Api.csproj" />
+    <ProjectReference Include="../../src/AgentHQ.Providers.ZCode/AgentHQ.Providers.ZCode.csproj" />
+    <ProjectReference Include="../../src/AgentHQ.Commands.ZCode/AgentHQ.Commands.ZCode.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Fixtures/zcode_schema.sql" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../src/AgentHQ.Api/wwwroot/**/*"
+             Link="wwwroot/%(RecursiveDir)%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <Content Include="Commands/**/*.md" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
