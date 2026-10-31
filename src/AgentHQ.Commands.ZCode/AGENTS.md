@@ -27,6 +27,28 @@ This file records the format constraints.
 - Wording is behaviour here: the templates are where the evidence requirements (commits, test
   results, lessons consulted, no self-verification) actually get enforced.
 
+## The workflow pack (WorkflowCommands/)
+
+The `/plan:*` workflow commands (six files, `name: plan:<verb>` frontmatter — the colon
+spelling comes from the project-scope `plan/` subdirectory) are mastered here in
+`WorkflowCommands/` and synced into target repositories with
+`AgentHQ.Api sync-workflow --repo <dir>` (`WorkflowSync.cs`). Same format constraints as the
+state pack: version marker first line, `$ARGUMENTS` after the command, exit `2` for a visible
+partial install. `--force` overwrites unmarked files — that is the documented cutover for a
+repository whose pack predates the marker (nastv's original `plan:abort` pack was cut over this
+way; `abort` became `abandon`).
+
+Workflow templates additionally must:
+
+- **Never write a `Status:` line into the plan file.** The hub is the single status authority;
+  the header block carries `Worktree:` / `Branch:` / `Started:` only.
+- **End with the state command that records the phase** (space form), and say which transition
+  typing the colon command already recorded at prompt time — both spellings parse to the same
+  transition (`PlanCommand` accepts `/plan:<verb>` and `/plan <verb>`).
+- **Register before state moves**: a brand-new plan must be registered (hub UI or
+  `submit_plan`) before `/plan start` can record it; the hook rejects unregistered plans
+  visibly (`hook.rejected`).
+
 ## Versioning a change
 
 Bump `Installer.CommandVersion` **and** the markers in the changed templates together. Files that

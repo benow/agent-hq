@@ -76,11 +76,15 @@ signal of intent, and files are the natural, versioned home for evidence.
 ## What happens to a `/plan` prompt
 
 1. The hook posts `{session_id, prompt, cwd}`.
-2. Agent HQ resolves the repository from `cwd` (the longest registered root path that prefixes it).
+2. Agent HQ resolves the repository from `cwd`: the longest registered root path that prefixes
+   it — or, when the prompt was typed inside a ZCode worktree
+   (`~/.zcode/worktrees/<repo-directory-name>/<worktree>`), the registered repository with that
+   directory name.
 3. It resolves the session: from its mirror, or directly from ZCode if the watcher has not seen
    it yet — a race should not lose a transition.
-4. It matches the prompt against `/plan <command> <file> [reason]`. Anything else is acknowledged
-   and ignored.
+4. It matches the prompt against `/plan <command> <file> [reason]` or its workflow twin
+   `/plan:<command> <file> [reason]` — the two spellings are one-to-one
+   ([plan workflow](plan-workflow.md)). Anything else is acknowledged and ignored.
 5. It resolves `<file>` against the repository (slug, repository-relative path, absolute path) and
    applies the command.
 6. A registered plan with a legal command transitions, with the session as actor and git `HEAD`
@@ -109,6 +113,16 @@ A rejection is not a silent failure: it is exactly what `hook.rejected` exists t
 Command templates ship in `src/AgentHQ.Commands.ZCode/Commands/` and carry a version marker.
 When they change, bump `Installer.CommandVersion` and the marker together, then re-run the
 installer — untouched templates are refreshed, edited ones are reported and kept.
+
+The [workflow pack](plan-workflow.md) (`/plan:*` — project scope, mastered in
+`src/AgentHQ.Commands.ZCode/WorkflowCommands/`) is synced per repository, not installed
+globally:
+
+```bash
+AgentHQ.Api sync-workflow --repo /path/to/project   # add --force for a pre-marker pack
+```
+
+Same marker rules: marked files upgrade, unmarked files are preserved and reported (exit 2).
 
 ## Undoing the installation
 
