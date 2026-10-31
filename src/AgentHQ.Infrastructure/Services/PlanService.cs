@@ -74,12 +74,28 @@ public sealed class PlanService
     // ---- submit / read / update ----
 
     public async Task<(PlanRow Plan, IReadOnlyList<string> Warnings)> SubmitAsync(
-        RepositoryRow repo, string name, string markdown)
+        RepositoryRow repo, string name, string markdown, string? slug = null)
     {
-        var slug = PlanSlug.Derive(name, s => _plans.SlugTakenAsync(repo.Id, s).GetAwaiter().GetResult());
+        // D10: a chosen slug is used verbatim and refused when taken — it never gets a -2 suffix
+        // (the author asked for that name). The derived default keeps the suffix behaviour.
+        string chosen;
+        if (slug is not null)
+        {
+            if (!PlanSlug.IsValid(slug))
+                throw new ArgumentException(
+                    $"slug '{slug}' is not a valid plan slug (lowercase letters, digits and '-', starting with a letter or digit)",
+                    nameof(slug));
+            if (await _plans.SlugTakenAsync(repo.Id, slug))
+                throw new SlugTakenException(slug);
+            chosen = slug;
+        }
+        else
+        {
+            chosen = PlanSlug.Derive(name, s => _plans.SlugTakenAsync(repo.Id, s).GetAwaiter().GetResult());
+        }
         var dir = Path.Combine(repo.RootPath, repo.PlansDir);
         Directory.CreateDirectory(dir);
-        var filePath = Path.Combine(dir, $"{slug}.md");
+        var filePath = Path.Combine(dir, $"{chosen}.md");
         var watcher = WatcherFor(repo.Id);
         watcher?.NoteSelfWrite();
         await File.WriteAllTextAsync(filePath, markdown);
@@ -88,7 +104,7 @@ public sealed class PlanService
         var plan = new PlanRow
         {
             Id = Guid.NewGuid().ToString(),
-            Slug = slug,
+            Slug = chosen,
             Name = name,
             RepositoryId = repo.Id,
             FilePath = filePath,
@@ -99,20 +115,117 @@ public sealed class PlanService
             CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
         };
-        await _plans.InsertAsync(plan);
+        try
+        {
+            await _plans.InsertAsync(plan);
+        }
+        catch (Microsoft.Data.Sqlite.SqliteException) when (slug is not null)
+        {
+            // The uniqueness index is the final word on a race between two submitters of the same
+            // chosen slug; report it as the same refusal rather than a raw store error.
+            if (_plans.SlugTakenAsync(repo.Id, chosen).GetAwaiter().GetResult())
+                throw new SlugTakenException(chosen);
+            throw;
+        }
         var warnings = PlanDocument.MissingSections(markdown)
             .Select(s => $"plan is missing the '{s}' section (soft validation)")
             .ToList();
         await _events.AppendAsync(EventTypes.PlanCreated, new
         {
-            planId = plan.Id, slug, name, repositoryId = repo.Id, status = plan.Status,
+            planId = plan.Id, slug = chosen, name, repositoryId = repo.Id, status = plan.Status,
             progress = new { checkedCount = progress.Checked, total = progress.Total }
         });
-        _log.Information("plan submitted {Slug} in {Repo}", slug, repo.Id);
+        _log.Information("plan submitted {Slug} in {Repo}", chosen, repo.Id);
         return (plan, warnings);
     }
 
+    /// <summary>A chosen slug (D10) that a plan in the repository already uses.</summary>
+    public sealed class SlugTakenException(string slug)
+        : Exception($"slug '{slug}' is already used in this repository; choose another or omit the slug")
+    {
+        public string Slug { get; } = slug;
+    }
+
+    /// <summary>The plan a refused chosen slug collides with (for the error's message).</summary>
+    public async Task<PlanRow?> FindBySlugAsync(string repositoryId, string slug) =>
+        await _plans.GetBySlugAsync(repositoryId, slug);
+
+    /// <summary>
+    /// Reads a plan's file, or answers that the registration outlived it (D12): a row whose file
+    /// is gone is a <c>not_found</c> result naming the path, never a raw exception.
+    /// </summary>
+    public async Task<PlanContent> TryReadContentAsync(PlanRow plan)
+    {
+        if (!File.Exists(plan.FilePath))
+            return PlanContent.Missing(plan.FilePath);
+        try
+        {
+            return PlanContent.Ok(await File.ReadAllTextAsync(plan.FilePath));
+        }
+        catch (IOException ex)
+        {
+            return PlanContent.Missing(plan.FilePath, ex.Message);
+        }
+    }
+
     public Task<string> ReadContentAsync(PlanRow plan) => File.ReadAllTextAsync(plan.FilePath);
+
+    /// <summary>
+    /// D11: re-points a registration at another plan file. The path must be an existing file
+    /// under the plan's own repository root and under that repository's plans directory. The
+    /// registration, its history and its slug are kept; the event names the move.
+    /// </summary>
+    public async Task<TransitionOutcome> RepointFileAsync(PlanRow plan, string path, string actor)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return Fail(plan, "path is required");
+        var repo = await _repositories.GetAsync(plan.RepositoryId);
+        if (repo is null) return Fail(plan, $"repository {plan.RepositoryId} is not registered");
+        var root = Path.GetFullPath(repo.RootPath).TrimEnd('/');
+        var plansDir = Path.GetFullPath(Path.Combine(root, repo.PlansDir)).TrimEnd('/');
+        var target = Path.IsPathRooted(path)
+            ? Path.GetFullPath(path)
+            : Path.GetFullPath(Path.Combine(root, path));
+        if (!target.StartsWith(root + "/", StringComparison.Ordinal))
+            return Fail(plan, $"'{target}' is outside the repository root {root}");
+        if (!target.StartsWith(plansDir + "/", StringComparison.Ordinal))
+            return Fail(plan, $"'{target}' is outside the repository's plans directory {plansDir}");
+        if (!File.Exists(target)) return Fail(plan, $"no file at {target}");
+        if (string.Equals(target, plan.FilePath, StringComparison.Ordinal))
+            return Fail(plan, $"plan {plan.Slug} is already registered at {target}");
+        var holder = await _plans.FindByFilePathAsync(repo.Id, target);
+        if (holder is not null && holder.Id != plan.Id)
+            return Fail(plan, $"'{target}' is already registered as plan '{holder.Slug}' ({holder.Id})");
+
+        var from = plan.FilePath;
+        var markdown = await File.ReadAllTextAsync(target);
+        var updated = await _plans.RepointAsync(plan.Id, target, PlanDirWatcher.ContentHash(markdown),
+            PlanDocument.Progress(markdown));
+        await _events.AppendAsync(EventTypes.PlanFileChanged, new
+        {
+            planId = plan.Id, slug = plan.Slug, from, to = target, actor
+        });
+        _log.Information("plan {Slug} re-pointed {From} → {To} by {Actor}", plan.Slug, from, target, actor);
+        return new TransitionOutcome(true, null, Array.Empty<string>(), updated);
+    }
+
+    /// <summary>
+    /// D11: deletes the registration — row, history, dependencies and blocks, in one
+    /// transaction. The file on disk is never touched. The event carries identity, not content.
+    /// </summary>
+    public async Task<TransitionOutcome> DeleteAsync(PlanRow plan, string actor)
+    {
+        var dependents = await _plans.DependentsAsync(plan.Id);
+        await _plans.DeleteAsync(plan.Id);
+        await _events.AppendAsync(EventTypes.PlanDeleted, new
+        {
+            planId = plan.Id, slug = plan.Slug, repositoryId = plan.RepositoryId, actor
+        });
+        _log.Information("plan {Slug} deleted by {Actor}; file kept at {File}", plan.Slug, actor, plan.FilePath);
+        var warnings = dependents
+            .Select(d => $"plan '{d.Slug}' ({d.Id}) depended on the deleted plan; that dependency no longer resolves")
+            .ToList();
+        return new TransitionOutcome(true, null, warnings, plan);
+    }
 
     public async Task<PlanRow> WriteContentAsync(PlanRow plan, string markdown)
     {
@@ -186,8 +299,12 @@ public sealed class PlanService
         // attributed to the verifying session.
         if (PlanStateMachine.IsShortCutEntry(sub, from))
         {
+            // Phase 7 / D2: keep the intermediate row attributed to the verifier, mark it
+            // via_shortcut so "the verifier recorded this, not an implementer" is legible from
+            // data, and do NOT set implemented_by — the verifier does not become the implementer.
             await RecordTransitionAsync(plan, from, PlanStatus.Implemented, actor.Type, actorSessionId,
-                $"verify (short-cut from {from.Code()})", gitHead ??= GitHead(repo), null, sodWarning: false);
+                $"verify (short-cut from {from.Code()})", gitHead ??= GitHead(repo), null, sodWarning: false,
+                viaShortcut: true);
             plan = (await _plans.GetAsync(plan.Id))!;
             from = PlanStatus.Implemented;
             target = PlanStatus.Verifying;
@@ -308,7 +425,7 @@ public sealed class PlanService
 
     internal async Task RecordTransitionAsync(PlanRow plan, PlanStatus from, PlanStatus to,
         string actorType, string? actorSessionId, string? command, string? gitHead,
-        string? note, bool sodWarning)
+        string? note, bool sodWarning, bool viaShortcut = false)
     {
         await _plans.SetStatusAsync(plan.Id, to.Code());
         await _plans.AddHistoryAsync(new HistoryRow
@@ -321,7 +438,8 @@ public sealed class PlanService
             Command = command,
             GitHead = gitHead,
             Note = note,
-            SeparationOfDutiesWarning = sodWarning ? 1 : 0
+            SeparationOfDutiesWarning = sodWarning ? 1 : 0,
+            ViaShortcut = viaShortcut ? 1 : 0
         });
         await _events.AppendAsync(EventTypes.PlanStatusChanged, new
         {
@@ -329,7 +447,8 @@ public sealed class PlanService
             from = from.Code(), to = to.Code(),
             actor = actorSessionId ?? actorType, actorType, command,
             gitHead, note,
-            separationOfDutiesWarning = sodWarning
+            separationOfDutiesWarning = sodWarning,
+            viaShortcut = viaShortcut ? true : (bool?)null
         });
         _log.Information("plan transition {Slug} {From} → {To} by {Actor} ({Command})",
             plan.Slug, from.Code(), to.Code(), actorSessionId ?? actorType, command);

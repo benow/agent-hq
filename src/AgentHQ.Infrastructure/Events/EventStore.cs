@@ -23,19 +23,44 @@ public sealed class EventStore
 
     public async Task<AgentHqEvent> AppendAsync(string type, object payload, CancellationToken ct = default)
     {
-        await using var conn = _db.Open();
         var at = DateTimeOffset.UtcNow;
         var json = JsonSerializer.Serialize(payload, AgentHqEvent.JsonOpts);
+        await using var conn = _db.Open();
         var seq = await conn.ExecuteScalarAsync<long>(
             "INSERT INTO events (type, payload, at) VALUES (@type, @payload, @at); SELECT last_insert_rowid();",
             new { type, payload = json, at = at.ToUnixTimeMilliseconds() });
-        var evt = new AgentHqEvent(seq, type, JsonSerializer.Deserialize<JsonElement>(json), at);
-        _log.Information("event.append seq={Seq} type={Type}", seq, type);
+        return await PublishedAfterCommitAsync(seq, type, json, at);
+    }
+
+    /// <summary>
+    /// Appends inside the caller's transaction, so the event commits or rolls back with the row
+    /// it describes (the Exchange writes item row + event atomically). Subscribers are notified
+    /// after the caller commits — call <see cref="PublishedAfterCommitAsync"/> with the returned
+    /// event, or accept that a rolled-back event must never reach a subscriber.
+    /// </summary>
+    public async Task<AgentHqEvent> AppendAsync(string type, object payload, System.Data.Common.DbTransaction tx,
+        CancellationToken ct = default)
+    {
+        var at = DateTimeOffset.UtcNow;
+        var json = JsonSerializer.Serialize(payload, AgentHqEvent.JsonOpts);
+        var seq = await tx.Connection!.ExecuteScalarAsync<long>(
+            "INSERT INTO events (type, payload, at) VALUES (@type, @payload, @at); SELECT last_insert_rowid();",
+            new { type, payload = json, at = at.ToUnixTimeMilliseconds() }, tx);
+        return new AgentHqEvent(seq, type, JsonSerializer.Deserialize<JsonElement>(json), at);
+    }
+
+    /// <summary>Announces an already-appended event to live subscribers (post-commit).</summary>
+    public async Task<AgentHqEvent> PublishedAfterCommitAsync(AgentHqEvent evt)
+    {
+        _log.Information("event.append seq={Seq} type={Type}", evt.Seq, evt.Type);
         if (Published is not null)
             foreach (var handler in Published.GetInvocationList())
                 await ((Func<AgentHqEvent, Task>)handler)(evt);
         return evt;
     }
+
+    private Task<AgentHqEvent> PublishedAfterCommitAsync(long seq, string type, string json, DateTimeOffset at) =>
+        PublishedAfterCommitAsync(new AgentHqEvent(seq, type, JsonSerializer.Deserialize<JsonElement>(json), at));
 
     /// <summary>
     /// Rows above <paramref name="sinceSeq"/>. The default limit is high on purpose: a catch-up
@@ -61,5 +86,14 @@ public sealed class EventStore
         await using var conn = _db.Open();
         var seq = await conn.ExecuteScalarAsync<long?>("SELECT MAX(seq) FROM events");
         return seq ?? 0;
+    }
+
+    /// <summary>The oldest event seq at or after <paramref name="atMs"/>, or null when none is that
+    /// recent. A consumer whose cursor is below it has fallen out of the replay window.</summary>
+    public async Task<long?> OldestSeqSinceAsync(long atMs)
+    {
+        await using var conn = _db.Open();
+        return await conn.ExecuteScalarAsync<long?>(
+            "SELECT MIN(seq) FROM events WHERE at >= @atMs", new { atMs });
     }
 }

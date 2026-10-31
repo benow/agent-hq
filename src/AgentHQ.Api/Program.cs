@@ -4,8 +4,10 @@ using AgentHQ.Api.Endpoints;
 using AgentHQ.Api.Mcp;
 using AgentHQ.Api.Services;
 using AgentHQ.Core.Domain;
+using AgentHQ.Core.Exchange;
 using AgentHQ.Infrastructure;
 using AgentHQ.Infrastructure.Events;
+using AgentHQ.Infrastructure.Exchange;
 using AgentHQ.Infrastructure.Services;
 using AgentHQ.Infrastructure.Stores;
 using AgentHQ.Infrastructure.Watching;
@@ -76,7 +78,6 @@ public static class Program
                 ZCodeDbPath: ResolveZCodeDbPath(),
                 StartWatchers: true),
                 Log.Logger);
-            Log.Information("agent-hq listening on http://127.0.0.1:{Port}", port);
             await app.RunAsync();
             return 0;
         }
@@ -133,6 +134,21 @@ public static class AgentHqHost
         builder.Services.AddSingleton(sp => new RepositoryStore(sp.GetRequiredService<AgentHqDb>()));
         builder.Services.AddSingleton(sp => new SessionStore(sp.GetRequiredService<AgentHqDb>()));
         builder.Services.AddSingleton(sp => new PlanStore(sp.GetRequiredService<AgentHqDb>()));
+        builder.Services.AddSingleton(sp => new ExchangeStore(sp.GetRequiredService<AgentHqDb>()));
+        // Exchange configuration is resolved once here, from the environment and the data dir —
+        // services never read environment variables themselves (one composition root).
+        var exchangeOptions = ExchangeOptions.FromEnvironment(Environment.GetEnvironmentVariable,
+            options.DataDir ?? Program.DataDir);
+        builder.Services.AddSingleton(exchangeOptions);
+        builder.Services.AddSingleton(sp => new BlobStore(exchangeOptions.BlobDir, exchangeOptions.BlobMaxBytes));
+        builder.Services.AddSingleton(sp => new ExchangeService(
+            sp.GetRequiredService<AgentHqDb>(),
+            sp.GetRequiredService<ExchangeStore>(),
+            sp.GetRequiredService<RepositoryStore>(),
+            sp.GetRequiredService<EventStore>(),
+            sp.GetRequiredService<BlobStore>(),
+            exchangeOptions,
+            logger: logger.ForContext("Subsystem", "exchange")));
         builder.Services.AddSingleton(sp => new PlanService(
             sp.GetRequiredService<PlanStore>(),
             sp.GetRequiredService<RepositoryStore>(),
@@ -178,7 +194,7 @@ public static class AgentHqHost
         events.Published += hub.PublishAsync;
 
         // migrations + startup full sync + watchers
-        app.Services.GetRequiredService<AgentHqDb>().Migrate();
+        app.Services.GetRequiredService<AgentHqDb>().Migrate(Path.Combine(options.DataDir ?? Program.DataDir, "logs", "migrations.log"));
         await sync.FullSyncAsync();
         foreach (var repo in await repos.ListAsync())
         {
@@ -194,6 +210,30 @@ public static class AgentHqHost
         app.Lifetime.ApplicationStopping.Register(() =>
         {
             foreach (var w in plans.Watchers) w.Dispose();
+        });
+
+        // The expiry sweep: an unanswered question past expires_at leaves every digest, emits
+        // exchange.expired and stays readable by id. Reads sweep too; this timer keeps a quiet
+        // system honest without waiting for a read.
+        var exchange = app.Services.GetRequiredService<ExchangeService>();
+        _ = Task.Run(async () =>
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(60));
+            while (await timer.WaitForNextTickAsync(app.Lifetime.ApplicationStopping))
+            {
+                try
+                {
+                    await exchange.SweepExpiredAsync(app.Lifetime.ApplicationStopping);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    logger.Error(ex, "exchange expiry sweep failed; the next tick retries in 60s");
+                }
+            }
         });
 
         app.MapGet("/health", () => Results.Json(new
@@ -212,6 +252,7 @@ public static class AgentHqHost
         app.MapRepositories();
         app.MapSessions();
         app.MapPlans();
+        app.MapExchange();
         app.MapEvents();
         app.MapPost("/hooks/zcode/prompts", HookFeedService.HandleAsync);
         app.MapMcp("/mcp");

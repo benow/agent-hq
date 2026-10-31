@@ -76,6 +76,73 @@ public sealed class PlanStore
             new { repositoryId, slug });
     }
 
+    public async Task<PlanRow?> FindBySlugAsync(string repositoryId, string slug)
+    {
+        await using var conn = _db.Open();
+        return await conn.QuerySingleOrDefaultAsync<PlanRow>(
+            "SELECT " + Columns.Plan + " FROM plans WHERE repository_id = @repositoryId AND slug = @slug",
+            new { repositoryId, slug });
+    }
+
+    public async Task<PlanRow?> FindByFilePathAsync(string repositoryId, string filePath)
+    {
+        await using var conn = _db.Open();
+        return await conn.QuerySingleOrDefaultAsync<PlanRow>(
+            "SELECT " + Columns.Plan + " FROM plans WHERE repository_id = @repositoryId AND file_path = @filePath",
+            new { repositoryId, filePath });
+    }
+
+    /// <summary>
+    /// D11: moves the registration to another file. The slug is kept (it is the plan's identity
+    /// in commands and history) and the content index is re-derived from the new file, without a
+    /// version bump — this is identity bookkeeping, not an external edit.
+    /// </summary>
+    public async Task<PlanRow?> RepointAsync(string id, string filePath, string contentHash, PlanProgress progress)
+    {
+        await using var conn = _db.Open();
+        await conn.ExecuteAsync(
+            @"UPDATE plans SET file_path = @filePath, content_hash = @Hash, checked = @Checked,
+                  total = @Total, updated_at = @Now
+              WHERE id = @Id",
+            new
+            {
+                Id = id,
+                filePath,
+                Hash = contentHash,
+                Checked = progress.Checked,
+                Total = progress.Total,
+                Now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+            });
+        return await conn.QuerySingleOrDefaultAsync<PlanRow>(
+            "SELECT " + Columns.Plan + " FROM plans WHERE id = @Id", new { Id = id });
+    }
+
+    /// <summary>
+    /// D11: removes a registration and everything keyed to it — history, dependencies (both
+    /// directions), blocks — in one transaction. The plan file on disk is not touched.
+    /// </summary>
+    public async Task DeleteAsync(string id)
+    {
+        await using var conn = _db.Open();
+        await using var tx = await conn.BeginTransactionAsync();
+        await conn.ExecuteAsync("DELETE FROM plan_status_history WHERE plan_id = @id", new { id }, tx);
+        await conn.ExecuteAsync("DELETE FROM plan_dependencies WHERE plan_id = @id OR requires_plan_id = @id",
+            new { id }, tx);
+        await conn.ExecuteAsync("DELETE FROM plan_blocks WHERE plan_id = @id", new { id }, tx);
+        await conn.ExecuteAsync("DELETE FROM plans WHERE id = @id", new { id }, tx);
+        await tx.CommitAsync();
+    }
+
+    /// <summary>Plans that declare this one as a requirement (they will lose a resolution).</summary>
+    public async Task<IReadOnlyList<PlanRow>> DependentsAsync(string planId)
+    {
+        await using var conn = _db.Open();
+        return (await conn.QueryAsync<PlanRow>(
+            "SELECT " + Columns.WithPrefix(Columns.Plan, "p.") + @" FROM plans p
+              JOIN plan_dependencies d ON d.plan_id = p.id WHERE d.requires_plan_id = @planId",
+            new { planId })).ToList();
+    }
+
     /// <summary>Resolves the &lt;file&gt; argument of a /plan command against a repository:
     /// slug, then repo-relative path, then absolute path.</summary>
     public async Task<IReadOnlyList<PlanRow>> ResolveFileArgAsync(RepositoryRow repo, string fileArg)
@@ -194,14 +261,15 @@ public sealed class PlanStore
         await using var conn = _db.Open();
         await conn.ExecuteAsync(
             @"INSERT INTO plan_status_history (plan_id, from_status, to_status, actor_type, actor_session_id,
-                  command, git_head, note, separation_of_duties_warning, at)
+                  command, git_head, note, separation_of_duties_warning, via_shortcut, at)
               VALUES (@PlanId, @FromStatus, @ToStatus, @ActorType, @ActorSessionId, @Command, @GitHead,
-                  @Note, @SodWarning, @At)",
+                  @Note, @SodWarning, @ViaShortcut, @At)",
             new
             {
                 row.PlanId, row.FromStatus, row.ToStatus, row.ActorType, row.ActorSessionId,
                 row.Command, row.GitHead, row.Note,
                 SodWarning = row.SodWarning ? 1 : 0,
+                ViaShortcut = row.ViaShortcutBool ? 1 : 0,
                 At = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
             });
     }

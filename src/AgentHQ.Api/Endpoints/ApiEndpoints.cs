@@ -135,9 +135,25 @@ public static class ApiEndpoints
                 return Results.BadRequest(new { error = "name and markdown are required" });
             var repo = await repos.GetAsync(req.Repo);
             if (repo is null) return Results.BadRequest(new { error = $"unknown repository '{req.Repo}'" });
-            var (plan, warnings) = await plans.SubmitAsync(repo, req.Name, req.Markdown);
-            return Results.Created($"/plans/{plan.Id}",
-                new { plan.Id, plan.Slug, plan.Status, warnings, file = plan.FilePath });
+            try
+            {
+                var (plan, warnings) = await plans.SubmitAsync(repo, req.Name, req.Markdown, req.Slug);
+                return Results.Created($"/plans/{plan.Id}",
+                    new { plan.Id, plan.Slug, plan.Status, warnings, file = plan.FilePath });
+            }
+            catch (PlanService.SlugTakenException ex)
+            {
+                // D10: a chosen slug is refused, never suffixed — the author asked for that name.
+                return Results.UnprocessableEntity(new
+                {
+                    ok = false,
+                    error = $"slug '{ex.Slug}' is already used by plan '{(await plans.FindBySlugAsync(repo.Id, ex.Slug))?.Id}'"
+                });
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.UnprocessableEntity(new { ok = false, error = ex.Message });
+            }
         });
 
         app.MapGet("/plans", async (string? repo, string? status, bool? ready, bool? blocked, PlanStore store) =>
@@ -157,7 +173,10 @@ public static class ApiEndpoints
         app.MapGet("/plans/{id}", async (string id, PlanStore store, PlanService svc) =>
         {
             var plan = await store.GetAsync(id);
-            if (plan is null) return Results.NotFound();
+            if (plan is null) return Results.NotFound(new { ok = false, error = "not_found", detail = $"no plan {id}" });
+            // D12: a registration whose file is gone is reported, not thrown. The registration
+            // itself is still readable — it names the missing path and the remedy.
+            var content = await svc.TryReadContentAsync(plan);
             var history = await store.HistoryAsync(id);
             var deps = await store.DependenciesAsync(id);
             return Results.Json(new
@@ -168,11 +187,14 @@ public static class ApiEndpoints
                 session = plan.SessionExternalId, implementedBy = plan.ImplementedBySessionId,
                 progress = new { checkedCount = plan.Checked, total = plan.Total },
                 plan.Version, updated = plan.Updated, file = plan.FilePath,
+                fileMissing = content.IsFound ? (bool?)null : true,
+                fileError = content.IsFound ? null : content.Detail,
                 dependencies = deps.Select(d => new { d.Id, d.Slug, d.Status }),
                 history = history.Select(h => new
                 {
                     h.FromStatus, h.ToStatus, h.ActorType, h.ActorSessionId, h.Command,
-                    h.GitHead, h.Note, separationOfDutiesWarning = h.SodWarning, at = h.At
+                    h.GitHead, h.Note, separationOfDutiesWarning = h.SodWarning,
+                    viaShortcut = h.ViaShortcutBool, at = h.At
                 })
             });
         });
@@ -180,17 +202,47 @@ public static class ApiEndpoints
         app.MapGet("/plans/{id}/content", async (string id, PlanStore store, PlanService svc) =>
         {
             var plan = await store.GetAsync(id);
-            if (plan is null) return Results.NotFound();
-            return Results.Text(await svc.ReadContentAsync(plan), "text/markdown");
+            if (plan is null) return Results.NotFound(new { ok = false, error = "not_found", detail = $"no plan {id}" });
+            var content = await svc.TryReadContentAsync(plan);
+            return content.IsFound
+                ? Results.Text(content.Markdown, "text/markdown")
+                : Results.NotFound(new { ok = false, error = "not_found", detail = content.Detail });
+        });
+
+        // D11: re-point a registration at another file (admin: andy from the browser, openclaw
+        // from MCP). The file must live under this repository's own plans directory.
+        app.MapPatch("/plans/{id}/file", async (string id, RepointRequest req, PlanStore store,
+            PlanService svc) =>
+        {
+            var plan = await store.GetAsync(id);
+            if (plan is null) return Results.NotFound(new { ok = false, error = "not_found", detail = $"no plan {id}" });
+            var outcome = await svc.RepointFileAsync(plan, req.Path ?? "", req.By ?? "andy");
+            return outcome.Ok
+                ? Results.Ok(new { id = outcome.Plan!.Id, file = outcome.Plan.FilePath })
+                : Results.UnprocessableEntity(new { ok = false, error = "scope_denied", detail = outcome.Error });
+        });
+
+        // D11: delete the registration, never the file. 404 when unknown.
+        app.MapDelete("/plans/{id}", async (string id, string? by, PlanStore store, PlanService svc) =>
+        {
+            var plan = await store.GetAsync(id);
+            if (plan is null) return Results.NotFound(new { ok = false, error = "not_found", detail = $"no plan {id}" });
+            var outcome = await svc.DeleteAsync(plan, by ?? "andy");
+            return Results.Ok(new
+            {
+                ok = true, id = plan.Id, slug = plan.Slug, file = plan.FilePath, fileKept = true,
+                warnings = outcome.Warnings
+            });
         });
 
         app.MapPut("/plans/{id}/content", async (string id, UpdateContentRequest req, PlanStore store, PlanService svc) =>
         {
             var plan = await store.GetAsync(id);
-            if (plan is null) return Results.NotFound();
+            if (plan is null) return Results.NotFound(new { ok = false, error = "not_found", detail = $"no plan {id}" });
             var updated = await svc.WriteContentAsync(plan, req.Markdown ?? "");
             return Results.Ok(new { updated.Id, updated.Version, progress = new { checkedCount = updated.Checked, total = updated.Total } });
         });
+
 
         app.MapPatch("/plans/{id}", async (string id, PatchPlanRequest req, PlanStore store, PlanService svc, EventStore events) =>
         {
@@ -276,7 +328,8 @@ public static class ApiEndpoints
     }
 
     public record RegisterRepoRequest(string? RootPath, bool? IsDefault);
-    public record SubmitPlanRequest(string? Repo, string? Name, string? Markdown);
+    public record SubmitPlanRequest(string? Repo, string? Name, string? Markdown, string? Slug);
+    public record RepointRequest(string? Path, string? By);
     public record UpdateContentRequest(string? Markdown);
     public record PatchPlanRequest(long? Priority, string? SessionId);
     public record PatchStatusRequest(string? Status, string? SessionId, string? By, string? Note, bool? Blocked);

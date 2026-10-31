@@ -76,9 +76,13 @@ public sealed class HistoryRow
     public string? GitHead { get; set; }
     public string? Note { get; set; }
     public long SeparationOfDutiesWarning { get; set; }
+    public long ViaShortcut { get; set; }
     public long At { get; set; }
 
     public bool SodWarning => SeparationOfDutiesWarning != 0;
+
+    /// <summary>True on the intermediate → implemented row a short-cut verification records.</summary>
+    public bool ViaShortcutBool => ViaShortcut != 0;
 }
 
 public sealed class LessonRow
@@ -89,4 +93,66 @@ public sealed class LessonRow
     public string? SourcePlanId { get; set; }
     public string ContentHash { get; set; } = "";
     public long FirstSeenAt { get; set; }
+}
+
+public sealed class ExchangeItemRow
+{
+    public string Id { get; set; } = "";
+    public string Kind { get; set; } = "";
+    public string State { get; set; } = "";
+    public string LatencyClass { get; set; } = "";
+    public string ThreadId { get; set; } = "";
+    public long HopCount { get; set; }
+    public string SenderActorType { get; set; } = "";
+    public string SenderActorId { get; set; } = "";
+    public string RecipientActorType { get; set; } = "";
+    public string RecipientActorId { get; set; } = "";
+    public string? RepositoryId { get; set; }
+    public string Subject { get; set; } = "";
+    public string? Body { get; set; }
+    public string? ContextRefs { get; set; }
+    public string? Purpose { get; set; }
+    public string? ClaimedBySessionId { get; set; }
+    public long? ClaimedAt { get; set; }
+    public long CreatedAt { get; set; }
+    public long? ExpiresAt { get; set; }
+    public long? AnsweredAt { get; set; }
+    public long? AcknowledgedAt { get; set; }
+    public long? KilledAt { get; set; }
+    public string? IdempotencyKey { get; set; }
+    public string? BlobPath { get; set; }
+    public long? BlobSize { get; set; }
+    public string? BlobContentType { get; set; }
+    public string? BlobSha256 { get; set; }
+
+    public Core.Exchange.ExchangeItem ToModel() => new(
+        Id, Kind, State, LatencyClass, ThreadId, (int)HopCount,
+        new Core.Exchange.ExchangeActor(SenderActorType, SenderActorId),
+        new Core.Exchange.ExchangeActor(RecipientActorType, RecipientActorId),
+        RepositoryId, Subject, Body, ContextRefs, Purpose, ClaimedBySessionId,
+        DateTimeOffset.FromUnixTimeMilliseconds(CreatedAt),
+        ClaimedAt is { } ca ? DateTimeOffset.FromUnixTimeMilliseconds(ca) : null,
+        ExpiresAt is { } ea ? DateTimeOffset.FromUnixTimeMilliseconds(ea) : null,
+        AnsweredAt is { } aa ? DateTimeOffset.FromUnixTimeMilliseconds(aa) : null,
+        AcknowledgedAt is { } ack ? DateTimeOffset.FromUnixTimeMilliseconds(ack) : null,
+        KilledAt is { } ka ? DateTimeOffset.FromUnixTimeMilliseconds(ka) : null,
+        IdempotencyKey, BlobPath, BlobSize, BlobContentType, BlobSha256);
+}
+
+public sealed class ExchangePresenceRow
+{
+    public string ActorType { get; set; } = "";
+    public string ActorId { get; set; } = "";
+    public long LastSeenAt { get; set; }
+    public string LatencyClass { get; set; } = "";
+
+    public DateTimeOffset LastSeen => DateTimeOffset.FromUnixTimeMilliseconds(LastSeenAt);
+}
+
+public sealed class ExchangeCursorRow
+{
+    public string ActorType { get; set; } = "";
+    public string ActorId { get; set; } = "";
+    public long LastSeq { get; set; }
+    public long UpdatedAt { get; set; }
 }

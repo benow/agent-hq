@@ -38,6 +38,18 @@ public sealed class AgentHQApp : IAsyncLifetime
     public static readonly ILogger Log = new LoggerConfiguration().MinimumLevel.Warning()
         .WriteTo.Sink(new XunitLogSink()).CreateLogger();
 
+    /// <summary>Process-wide environment overrides for this in-memory host (Exchange options are
+    /// read once, in BuildAsync). Reverted when the host is disposed.</summary>
+    private readonly Dictionary<string, string?> _savedEnvironment = new();
+
+    public void SetEnvironment(string name, string? value)
+    {
+        if (!_savedEnvironment.ContainsKey(name)) _savedEnvironment[name] = Environment.GetEnvironmentVariable(name);
+        Environment.SetEnvironmentVariable(name, value);
+    }
+
+    public void ClearEnvironment(string name) => SetEnvironment(name, null);
+
     public async Task InitializeAsync()
     {
         Directory.CreateDirectory(PlansDir);
@@ -68,12 +80,23 @@ public sealed class AgentHQApp : IAsyncLifetime
 
     // ---- helpers ----
 
-    public async Task<string> RegisterRepositoryAsync()
+    public async Task<string> RegisterRepositoryAsync(string? rootPath = null)
     {
-        var resp = await Client.PostAsJsonAsync("/repositories", new { rootPath = RepoRoot });
+        var resp = await Client.PostAsJsonAsync("/repositories", new { rootPath = rootPath ?? RepoRoot });
         resp.EnsureSuccessStatusCode();
         var doc = await resp.Content.ReadFromJsonAsync<JsonElement>();
         return doc.GetProperty("id").GetString()!;
+    }
+
+    /// <summary>A fresh registered repository (with its own docs/plans) for tests that need digest
+    /// isolation from their class-mates: the Exchange digest and role inbox are scoped by
+    /// repository, so one repository per test keeps one test's mail out of another's assertions
+    /// without a second host.</summary>
+    public async Task<(string Id, string Root)> NewRepoAsync()
+    {
+        var root = Path.Combine(RootDir, "ex-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "docs", "plans"));
+        return (await RegisterRepositoryAsync(root), root);
     }
 
     public async Task<JsonElement> SubmitPlanAsync(string name, string markdown)
@@ -150,15 +173,32 @@ public sealed class AgentHQApp : IAsyncLifetime
             catch (TimeoutException) { }
         }
         await ZCode.DisposeAsync();
+        foreach (var (name, value) in _savedEnvironment) Environment.SetEnvironmentVariable(name, value);
         try { Directory.Delete(RootDir, recursive: true); } catch { }
         try { Directory.Delete(ZCodeRoot, recursive: true); } catch { }
         try { Directory.Delete(OtherZCodeRoot, recursive: true); } catch { }
     }
 }
 
+/// <summary>
+/// Captures everything logged through <see cref="AgentHQApp.Log"/> in memory. Console output is
+/// invisible under the xUnit host, so a failing test that needs log evidence calls
+/// <see cref="Drain"/> in its assertion message instead of fishing for output that never appears.
+/// </summary>
 public sealed class XunitLogSink : Serilog.Core.ILogEventSink
 {
-    public void Emit(Serilog.Events.LogEvent logEvent) => System.IO.File.AppendAllText("/tmp/serilog-probe.log", logEvent.RenderMessage() + "\n");
+    private static readonly System.Collections.Concurrent.ConcurrentQueue<string> _lines = new();
+
+    public void Emit(Serilog.Events.LogEvent logEvent) => _lines.Enqueue(logEvent.RenderMessage());
+
+    /// <summary>Everything captured this process so far, clearing the buffer. Classes run in
+    /// parallel, so lines from other classes may interleave.</summary>
+    public static IReadOnlyList<string> Drain()
+    {
+        var all = _lines.ToArray();
+        _lines.Clear();
+        return all;
+    }
 }
 
 /// <summary>Mocks a provider that returns nothing — used for isolated store tests.</summary>

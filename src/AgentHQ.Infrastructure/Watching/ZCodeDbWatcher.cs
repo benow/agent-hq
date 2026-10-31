@@ -35,9 +35,9 @@ public sealed class ZCodeDbWatcher : IDisposable
     public void Start()
     {
         var dir = Path.GetDirectoryName(_dbPath)!;
-        if (!Directory.Exists(dir))
+        if (!Directory.Exists(dir) || !File.Exists(_dbPath))
         {
-            _log.Warning("ZCode db directory {Dir} does not exist; watcher not started", dir);
+            _log.Warning("ZCode db {Db} is not present; watcher not started (sessions come from the mirror only)", _dbPath);
             return;
         }
 

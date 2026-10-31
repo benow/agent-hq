@@ -1,3 +1,9 @@
 *.sqlite*
 artifacts/
 .playwright-mcp/
+AGENTS.user.md
+
+# Local cleanup for stale exchange-plan rows registered before the file was renamed (see
+# docs/plans/conversation-enhancements-etc.md, D11); remove once POST /plans honours a slug.
+/docs/plans/conversation-in-agent-hq-exchange-v2.md
+/docs/plans/conversation-in-agent-hq-exchange-v2-2.md

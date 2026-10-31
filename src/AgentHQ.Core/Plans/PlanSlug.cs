@@ -5,7 +5,14 @@ namespace AgentHQ.Core.Plans;
 public static partial class PlanSlug
 {
     [GeneratedRegex(@"^[a-z0-9][a-z0-9-]*$")]
-    private static partial Regex Valid();
+    private static partial Regex Shape();
+
+    /// <summary>
+    /// The slug grammar a file name must satisfy: <c>^[a-z0-9][a-z0-9-]*$</c>, at most 120
+    /// characters. A caller-chosen slug (D10) is validated with this; a derived one always fits.
+    /// </summary>
+    public static bool IsValid(string? slug) =>
+        !string.IsNullOrEmpty(slug) && slug.Length <= 120 && Shape().IsMatch(slug);
 
     /// <summary>
     /// Derives a filesystem-safe slug from a plan name: lowercase, spaces → '-', strip the
@@ -32,7 +39,7 @@ public static partial class PlanSlug
         var stripped = new string(lowered.Select(c => char.IsAsciiLetterOrDigit(c) || c == '-' ? c : ' ').ToArray());
         var collapsed = Regex.Replace(stripped, @"-+", "-").Trim('-');
         var result = Regex.Replace(collapsed, @"\s+", "");
-        return Valid().IsMatch(result) ? result : result.Length == 0 ? "" : result;
+        return Shape().IsMatch(result) ? result : result.Length == 0 ? "" : result;
     }
 
     /// <summary>Repository id: slug of the root path (absolute, lowercased, / → -).</summary>
