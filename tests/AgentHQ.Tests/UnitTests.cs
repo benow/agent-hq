@@ -102,6 +102,39 @@ public class PlanCommandTests
         Assert.Null(c.ReasonTail);
     }
 
+    [Fact]
+    public void ParsesColonSpelling()
+    {
+        var c = PlanCommand.TryParse("/plan:start docs/plans/x.md");
+        Assert.NotNull(c);
+        Assert.Equal("start", c!.Subcommand);
+        Assert.Equal("docs/plans/x.md", c.Argument);
+        Assert.Null(c.ReasonTail);
+    }
+
+    [Fact]
+    public void ColonSpellingCarriesReasonTail()
+    {
+        var c = PlanCommand.TryParse("/plan:fail docs/plans/x.md verification criterion 2 fails");
+        Assert.Equal("fail", c!.Subcommand);
+        Assert.Equal("docs/plans/x.md", c.Argument);
+        Assert.Equal("verification criterion 2 fails", c.ReasonTail);
+    }
+
+    [Fact]
+    public void ColonSpellingIgnoresTitleTail()
+    {
+        var c = PlanCommand.TryParse("/plan:start my-plan A Longer Title Here");
+        Assert.Equal("my-plan", c!.Argument);
+        Assert.Null(c.ReasonTail);
+    }
+
+    [Theory]
+    [InlineData("/plan:")]
+    [InlineData("/plan:start")]
+    [InlineData("/plan: start docs/plans/x.md")]
+    public void RejectsMalformedColonCommands(string prompt) => Assert.Null(PlanCommand.TryParse(prompt));
+
     [Theory]
     [InlineData("hello there")]
     [InlineData("/plan")]

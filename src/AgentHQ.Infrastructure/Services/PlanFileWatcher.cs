@@ -16,17 +16,20 @@ public sealed class PlanDirWatcher : IDisposable
     private readonly RepositoryRow _repo;
     private readonly PlanStore _plans;
     private readonly Func<PlanRow, Task> _onExternalChange;
+    private readonly Func<string, string, Task>? _onMoved;
     private readonly Serilog.ILogger _log;
     private readonly TimeSpan _debounce;
     private FileSystemWatcher? _fsw;
     private DateTime _settleUntilUtc = DateTime.MinValue;
 
     public PlanDirWatcher(RepositoryRow repo, PlanStore plans,
-        Func<PlanRow, Task> onExternalChange, TimeSpan? debounce = null, Serilog.ILogger? logger = null)
+        Func<PlanRow, Task> onExternalChange, TimeSpan? debounce = null, Serilog.ILogger? logger = null,
+        Func<string, string, Task>? onMoved = null)
     {
         _repo = repo;
         _plans = plans;
         _onExternalChange = onExternalChange;
+        _onMoved = onMoved;
         _debounce = debounce ?? TimeSpan.FromMilliseconds(500);
         _log = (logger ?? Serilog.Log.ForContext<PlanDirWatcher>()).ForContext("Subsystem", "plans");
     }
@@ -50,6 +53,7 @@ public sealed class PlanDirWatcher : IDisposable
         _fsw.Changed += (_, e) => _ = OnChangeAsync(e.FullPath);
         _fsw.Created += (_, e) => _ = OnChangeAsync(e.FullPath);
         _fsw.Renamed += (_, e) => _ = OnChangeAsync(e.FullPath);
+        _fsw.Deleted += (_, e) => _ = OnDeletedAsync(e.FullPath);
         _log.Information("plan dir watcher started on {Dir}", PlansDirAbsolute);
     }
 
@@ -80,6 +84,30 @@ public sealed class PlanDirWatcher : IDisposable
         catch (Exception ex)
         {
             _log.Debug(ex, "plan watcher change handling failed for {Path}", fullPath);
+        }
+    }
+
+    /// <summary>
+    /// A plan file that disappears from the watched directory while its archive copy exists at
+    /// <c>done/&lt;name&gt;</c> is the done/abandon archive move: hand both paths to the host so
+    /// the registration re-points instead of silently going stale.
+    /// </summary>
+    private async Task OnDeletedAsync(string oldFullPath)
+    {
+        try
+        {
+            if (_onMoved is null) return;
+            await Task.Delay(_debounce);
+            var archivePath = Path.Combine(PlansDirAbsolute, "done", Path.GetFileName(oldFullPath));
+            if (!File.Exists(archivePath)) return;
+            var plan = (await _plans.ListAsync(repoId: _repo.Id)).FirstOrDefault(p =>
+                string.Equals(p.FilePath, oldFullPath, StringComparison.OrdinalIgnoreCase));
+            if (plan is null) return;
+            await _onMoved(oldFullPath, archivePath);
+        }
+        catch (Exception ex)
+        {
+            _log.Debug(ex, "plan watcher archive-move handling failed for {Path}", oldFullPath);
         }
     }
 

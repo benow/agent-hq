@@ -3,12 +3,15 @@ using System.Text.RegularExpressions;
 namespace AgentHQ.Core.Plans;
 
 /// <summary>
-/// A parsed /plan command from a hook-fed prompt: /plan &lt;subcommand&gt; &lt;argument&gt;.
-/// The argument (the &lt;file&gt;) may be a slug, a repository-relative path, or an absolute path.
+/// A parsed /plan command from a hook-fed prompt: /plan &lt;subcommand&gt; &lt;argument&gt; or
+/// /plan:&lt;subcommand&gt; &lt;argument&gt;. The two spellings are one-to-one — the colon form
+/// is the workflow command (from the plan/ command subdirectory), the space form the state
+/// command — and both move the hub identically. The argument (the &lt;file&gt;) may be a slug,
+/// a repository-relative path, or an absolute path.
 /// </summary>
 public sealed record PlanCommand(string Subcommand, string Argument, string? ReasonTail)
 {
-    private static readonly Regex Pattern = new(@"^/plan\s+(\w+)\s+(.+)$", RegexOptions.Compiled);
+    private static readonly Regex Pattern = new(@"^/plan(?::|\s+)(\w+)\s+(.+)$", RegexOptions.Compiled);
 
     public static PlanCommand? TryParse(string prompt)
     {

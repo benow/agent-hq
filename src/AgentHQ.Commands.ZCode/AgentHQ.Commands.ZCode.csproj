@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
     <Content Include="Commands/**/*.md" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="WorkflowCommands/**/*.md" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

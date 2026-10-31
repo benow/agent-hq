@@ -65,12 +65,12 @@ public sealed class AgentHQApp : IAsyncLifetime
         Client = Host.GetTestClient();
     }
 
-    public async Task<WebApplication> StartAsync()
+    public async Task<WebApplication> StartAsync(string? worktreesRoot = null)
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
         var app = await AgentHqHost.BuildAsync(builder, new AgentHqOptions(AgentHqDbPath, ZCode.DbPath,
-            StartWatchers: true, DataDir: Path.Combine(RootDir, "data")), Log);
+            StartWatchers: true, DataDir: Path.Combine(RootDir, "data"), WorktreesRoot: worktreesRoot), Log);
         await app.StartAsync();
         return app;
     }

@@ -63,9 +63,21 @@ public sealed class PlanService
                 version = plan.Version, progress = new { checkedCount = plan.Checked, total = plan.Total },
                 reason = "external-edit"
             });
-        });
+        }, onMoved: (from, to) => HandleArchiveMoveAsync(repo, from, to));
         watcher.Start();
         _watchers[repo.Id] = watcher;
+    }
+
+    /// <summary>The done/abandon archive move: re-point the registration at the archived copy
+    /// through the same validated path the API uses, so the row never goes stale.</summary>
+    private async Task HandleArchiveMoveAsync(RepositoryRow repo, string from, string to)
+    {
+        var plan = (await _plans.ListAsync(repoId: repo.Id)).FirstOrDefault(p => p.FilePath == from);
+        if (plan is null) return;
+        var outcome = await RepointFileAsync(plan, to, "watcher");
+        if (!outcome.Ok)
+            _log.Warning("archive move of {Slug} from {From} to {To} could not be recorded: {Error}",
+                plan.Slug, from, to, outcome.Error);
     }
 
     public PlanDirWatcher? WatcherFor(string repositoryId) =>
