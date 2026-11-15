@@ -24,9 +24,9 @@ commands. Without the variable it is exactly today's hub — which is the rollba
   contract.
 - Projects: the spoke host reuses `AgentHQ.Infrastructure`, `AgentHQ.Providers.ZCode`,
   `AgentHQ.Commands.ZCode`. New: the spoke-mode wiring and forwarder live with the host
-  composition (one composition root — the mode is options, not a second host). A future
-  non-ZCode spoke would compose `AgentHQ.Client` + its own provider; nothing in the
-  forwarder knows ZCode.
+  composition (one composition root — the mode is options, not a second host). Nothing in
+  the forwarder knows ZCode — part 5's build spoke composes the same host with
+  `AgentHQ.Client` + build capabilities, and its existence is the proof of the seam.
 - Runtime identity: the laptop unit becomes `agent-hq-spoke.service` (deploy script's
   laptop mode); env `AGENTHQ_SPOKE_NAME` (default the hostname), `AGENTHQ_HUB_URL`,
   `AGENTHQ_WORKTREES_ROOT` (from the merged branch).
@@ -45,7 +45,7 @@ commands. Without the variable it is exactly today's hub — which is the rollba
   `PlanService` — the same one path — with the envelope's `actor` as attribution. Result
   posted back; the resulting local events replicate upward like any others, so the UI's
   outcome arrives via the normal stream.
-- **Injection proxy**: when part 5's digest/injection asks the spoke, the spoke answers
+- **Injection proxy**: when part 6's digest/injection asks the spoke, the spoke answers
   from local state where it can (plan status) and proxies the hub-owned part (exchange
   inbox) with a short timeout and a cached last-good fallback — never blocking, never
   injecting stale-as-fact (the cache carries its age).
@@ -74,7 +74,7 @@ directly. Rollback (hub mode) restores everything, unchanged.
 - [ ] Registration/heartbeat/snapshot/command loop on `AgentHQ.Client`; presence surfaced
       to the hub UI.
 - [ ] Command execution path with actor passthrough; idempotence for redelivered commands.
-- [ ] Injection proxy (skeleton now; part 5 builds the digest on it).
+- [ ] Injection proxy (skeleton now; part 6 builds the digest on it).
 - [ ] Laptop unit rename to `agent-hq-spoke.service` (deploy script laptop mode; legacy
       refusal logic updated per the naming rules).
 - [ ] E2E: the simulation gains a spoke actor — in-memory hub (Postgres) + real spoke

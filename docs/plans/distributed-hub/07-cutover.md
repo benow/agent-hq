@@ -1,4 +1,4 @@
-# 6 — cutover: the hub moves to builds, the laptop flips to a spoke
+# 7 — cutover: the hub moves to builds, the laptop flips to a spoke
 
 Component of: [00-OVERVIEW.md](00-OVERVIEW.md) · Started: 2026-11-15
 
@@ -12,7 +12,7 @@ it's a commitment.
 
 ## Preconditions (all gates green)
 
-Parts 1–5 verified by other sessions; the merge prereq and step-0 items from the overview
+Parts 1–6 verified by other sessions; the merge prereq and step-0 items from the overview
 done. The laptop hub is still the live system right up to the flip below.
 
 ## Steps
@@ -20,6 +20,9 @@ done. The laptop hub is still the live system right up to the flip below.
 - [ ] **Preflight on builds**: deploy the hub via the container path; bind LAN
       (`AGENTHQ_URL=http://192.168.0.178:5317`); auth mandatory (part 2) — anonymous
       probe from the NAS is refused; loopback on builds still trusted for ops.
+- [ ] **Build spoke live on builds** (part 5, if it did not go live earlier — it only needs
+      the spoke host from part 4, not the ZCode specifics): unit running, CI events flowing
+      through its loopback ingest, health checks and integration runs visible at the hub.
 - [ ] **Shadow run (one day minimum)**: laptop stays the live hub; a second instance of
       the spoke mode runs against the builds hub on an alternate port with the same
       `~/.zcode` read access — no, simpler and honest: skip the second instance (the
@@ -29,8 +32,10 @@ done. The laptop hub is still the live system right up to the flip below.
 - [ ] **The flip**: set `AGENTHQ_HUB_URL` on the laptop unit (`agent-hq-spoke.service`
       rename lands with part 4), restart. The spoke registers, snapshots, streams. Verify
       criteria 2 and 3 of the overview before touching anything else.
-- [ ] **Retarget nastv**: the `notify-agent-hq` step's URL → builds, secret → a `ci`
-      identity token; one deploy run produces its record (criterion 4).
+- [ ] **Retarget nastv**: the `notify-agent-hq` step's URL → the build spoke's loopback
+      ingest on builds (`localhost:5318`, part 5) — co-located runners need no GH secret;
+      `continue-on-error` stays. If part 5 went live before the flip this is already done —
+      verify one deploy run produces its record (criterion 4).
 - [ ] **Linda V2**: her OpenClaw MCP config points at the hub with her credentials; she
       answers a PM question from `get_overview` + `get_events` alone (criterion 7, her
       captured transcript).
@@ -58,7 +63,8 @@ pass, plus:
 3. ZCode on the laptop never noticed: a `/plan` command issued mid-flip (hub briefly
    restarting) applied locally and appears at the hub after drain.
 4. nastv evidence: a deploy record within one minute of a run; the annotation path still
-   works when the hub is stopped (their criterion, re-run post-cutover).
+   works when the spoke is stopped; with only the hub stopped, CI events queue in the spoke
+   and drain without loss (their criterion, re-run post-cutover).
 5. Both Linda transcripts (V2 internal, V1 external) captured with request/response and
    the actor identity her calls carry.
 6. The rollback drill passes and is re-flipped; final state is spoke mode.

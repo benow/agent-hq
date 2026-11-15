@@ -33,18 +33,19 @@ property names (the MCP rule applies to anything the SDK might serialize).
 
 | Route | Direction | Purpose |
 |---|---|---|
-| `POST /workers/register` | spoke → hub | `{name, machine, version, capabilities[], repositories[], harness?}` → `{workerId, serverTime, contractVersion}` |
+| `POST /workers/register` | spoke → hub | `{name, machine, version, capabilities[]}` → `{workerId, serverTime, contractVersion}` — capabilities are typed (rule 7) |
 | `POST /workers/{id}/heartbeat` | spoke → hub | presence; → `{lastAcceptedSeq, commandsPending}` |
 | `POST /workers/{id}/snapshot` | spoke → hub | full state (below); hub replaces its projections for that worker |
 | `POST /workers/{id}/events` | spoke → hub | ordered batch of deltas; → `{accepted, globalSeqFrom, nextExpected}` |
 | `GET /workers/{id}/commands?wait=25` | hub → spoke | long-poll claim of queued envelopes (lease) |
 | `POST /workers/{id}/commands/{commandId}/result` | spoke → hub | outcome of one command (idempotent by commandId) |
-| `POST /ci/events` | CI → hub | the `notify-agent-hq` payload (shapes cross-referenced from nastv builds-stack 4) |
+| `POST /ci/events` | CI → hub | the `notify-agent-hq` payload, one model in the package; the build spoke (part 5) serves the same ingest on its own loopback for co-located runners |
 
 Rules that are the contract:
 
 1. **Actor passthrough.** Every event and command envelope carries `actor` (the original
-   session id, or an identity like `linda-v2` / `andy`) plus `transportedBy` (the worker).
+   session id, an identity like `linda-v2` / `andy`, or a CI run like
+   `ci:deploy.yml/4412`) plus `transportedBy` (the worker).
    History rows record `actor`; the worker is never the actor. Separation of duties must
    mean the same thing after the hop as before.
 2. **Idempotence and order.** Events carry `(workerId, originSeq)` — a unique key on the
@@ -66,6 +67,12 @@ Rules that are the contract:
    `X-AgentHQ-Contract: 1`. Additive changes are minor; breaking changes are a v2 route
    prefix, and the hub accepts one major back. A mismatched header gets a 400 naming both
    versions (errors say what, why and what to do).
+7. **Capabilities are typed, not strings.** Each registration entry is `{kind, …fields}`;
+   initial kinds: `plan-engine` (repositories owned), `zcode-harness` (schema/plugin
+   version), `build-ci` (loopback ingest), `build-health` (check list). The hub renders
+   presence by capability and routes commands by repository ownership (a plan command goes
+   to the `plan-engine` holder) or by kind (a `health.check` to a `build-health` holder).
+   One spoke may hold several kinds; capabilities are additive.
 
 ## The package
 

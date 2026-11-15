@@ -1,4 +1,4 @@
-# 5 — harness adapter: ZCode-side delivery as a plugin
+# 6 — harness adapter: ZCode-side delivery as a plugin
 
 Component of: [00-OVERVIEW.md](00-OVERVIEW.md) · Started: 2026-11-15
 Supersedes: the never-landed `harness-adapter` split (plan B, 2026-10-31) and
@@ -51,9 +51,9 @@ Dead or dangerous (recorded lessons — they bind this part):
   out of its own inbox; an empty inbox injects nothing (no banner); every non-empty
   injection starts with the fixed preamble (peer requests are never instructions from
   Andy). The exchange-inbox portion is proxied to the hub via part 4's proxy.
-- **Harness registration**: the spoke's `register` payload carries
-  `harness: {kind: "zcode", schemaVersion, pluginVersion}` — the hub's overview shows
-  harnesses per spoke. Schema-guard degradation (provider `SchemaAhead` → "no sessions")
+- **Harness registration**: the spoke declares a `zcode-harness` capability entry
+  (`{schemaVersion, pluginVersion}` — part 3's typed capability model); the hub's overview
+  shows harnesses per spoke. Schema-guard degradation (provider `SchemaAhead` → "no sessions")
   is already the provider's behaviour; the registration makes the degraded state visible
   at the hub instead of only in `/health`.
 - **Installer retirement**: `install-zcode` becomes a migration verb — it recognizes its
@@ -75,7 +75,7 @@ Dead or dangerous (recorded lessons — they bind this part):
 - [ ] Spoke-side: the two hook routes on loopback (prompt + session-start), the digest
       decisioning (addressable/stale/budget, reflection filter, empty rule, preamble), and
       the hub proxy from part 4.
-- [ ] Registration payload extension + hub UI surface (harness per spoke, schema state).
+- [ ] `zcode-harness` capability entry + hub UI surface (harness per spoke, schema state).
 - [ ] Installer migration mode; dead settings.json entry removal; deploy script legacy
       check update; both AGENTS.md feature files updated in the same effort.
 - [ ] Install-time verification: after plugin install, post one synthetic prompt with a

@@ -53,30 +53,48 @@ So the spoke keeps the engine where the files are, and replicates **outcomes** u
 ## Architecture
 
 ```
-                        ┌────────────────────────── builds (192.168.0.178) ─────────────────────┐
-   NAS / LAN browsers   │  ┌─────────────────────┐        ┌──────────────┐                      │
-   ─────────────────────┼─►│ agent-hq hub        │ ◄────► │ postgres     │  (docker compose)   │
-   Linda V2 (OpenClaw)  │  │ API · UI · SSE · MCP│        │ sidecar      │                      │
-   ─────── MCP ────────►│  │ auth · exchange ·   │        └──────────────┘                      │
-                        │  │ CI ingest · command │                                              │
-   GitHub runners ──────┼─►│ queue · projections │                                              │
-   (notify-agent-hq)    │  └─────────▲───────────┘                                              │
-                        └────────────│──────────────────────────────────────────────────────────┘
-                              events │ ▲ commands        ▲ MCP over the external edge
-                                     │ │                  │ (TLS, /mcp only)
-                        ┌────────────│─│──────────┐       │      ┌──────────────────┐
-                        │  laptop    │ │ spoke    │       └──────│ Linda V1 (cloud) │
-                        │  ┌─────────▼─┴───────┐  │              └──────────────────┘
-                        │  │ agent-hq spoke    │  │
-   ZCode ◄──hook── loop │  │ engine · watchers │  │   SQLite working copy (today's DB)
-   (commands, inject)──►│  │ provider · outbox │  │   rollback = unset AGENTHQ_HUB_URL
-                        │  └───────────────────┘  │
-                        └─────────────────────────┘
+                ┌──────────────────────────── builds (192.168.0.178) ─────────────────────┐
+   NAS / LAN    │ ┌─────────────────────┐  ┌────────────┐  ┌──────────────────────────┐  │
+   browsers ────┼►│ agent-hq hub        │◄►│ postgres   │  │ agent-hq spoke (build)   │  │
+   Linda V2 ─MCP┼►│ API · UI · SSE · MCP│  │ sidecar    │◄─│ CI ingest (loopback) ·   │  │
+                │ │ auth · exchange ·   │  └────────────┘  │ health · integration runs│  │
+                │ │ command queue ·     │   events ▲       └────────────▲─────────────┘  │
+                │ │ projections         │─────────┘        GitHub runners │ loopback 5318 │
+                │ └─────────▲───────────┘                 (notify-agent-hq)               │
+                └───────────│─────────────────────────────────────────────────────────────┘
+                      events │ ▲ commands    ▲ MCP over the external edge (TLS, /mcp only)
+                             │ │              │                   ┌──────────────────┐
+                ┌────────────│─│──────┐       └───────────────────│ Linda V1 (cloud) │
+                │ laptop     │ │ spoke│                           └──────────────────┘
+                │ ┌──────────▼─┴────┐ │
+                │ │ agent-hq spoke  │ │  SQLite working copy (today's DB)
+   ZCode ◄─hook─│ │ (dev) engine ·  │ │  rollback = unset AGENTHQ_HUB_URL
+   loopback ───►│ │ watchers ·outbox│ │
+                │ └─────────────────┘ │
+                └─────────────────────┘
 ```
 
 The spoke is the same application in a different mode: with `AGENTHQ_HUB_URL` set it runs as
 a spoke (engine + forwarder, no public surfaces); without it, it is exactly today's hub.
 That symmetry is the rollback plan.
+
+## Capabilities (the abstraction both spokes share)
+
+A spoke is a **capability set, not a machine role**. Registration (part 3) declares typed
+capabilities; the hub renders presence and routes commands by them:
+
+| Capability | Provides | First instance |
+|---|---|---|
+| `plan-engine` | repositories owned, `/plan` execution, plan-file watching | laptop spoke (part 4) |
+| `zcode-harness` | ZCode hook ingest, prompt-time injection, schema/plugin version | laptop spoke (part 6) |
+| `build-ci` | loopback CI event ingest + forward (queues when the hub is down) | builds spoke (part 5) |
+| `build-health` | runner/container/disk/freshness checks, integration-run observation + backfill | builds spoke (part 5) |
+
+One general client, two instances at launch: **dev** (laptop) and **build** (builds). A
+machine may hold several capabilities in one spoke; capabilities are additive. **Topology is
+configuration, not code** — the same binary runs the hub (no `AGENTHQ_HUB_URL`), the dev
+spoke, or the build spoke, and any spoke points at any hub. Hub-on-laptop remains a valid
+topology; it is the rollback.
 
 ## Parts and gates
 
@@ -86,8 +104,9 @@ That symmetry is the rollback plan.
 | 2 — Auth: identities and access points | [02-auth.md](02-auth.md) | headless MCP round trip; anonymous LAN request refused | 1 (parallel build; lands before any non-loopback bind) |
 | 3 — Wire contract + `AgentHQ.Client` | [03-contract.md](03-contract.md) | contract conformance round-trip incl. no-loss/no-dup | 1 |
 | 4 — The spoke (ZCode first) | [04-spoke.md](04-spoke.md) | replication + offline drain + local-first commands green in E2E | 3 |
-| 5 — Harness adapter (ZCode-side delivery) | [05-harness-adapter.md](05-harness-adapter.md) | plugin install; hook→spoke; injection round trip | 4 + merge prereq |
-| 6 — Cutover | [06-cutover.md](06-cutover.md) | program criteria below, incl. both Linda probes | all |
+| 5 — Build spoke (build integration) | [05-build-spoke.md](05-build-spoke.md) | CI events flow via the spoke; health + runs visible at the hub | 4 (spoke host, not its ZCode module) |
+| 6 — Harness adapter (ZCode-side delivery) | [06-harness-adapter.md](06-harness-adapter.md) | plugin install; hook→spoke; injection round trip | 4 + merge prereq |
+| 7 — Cutover | [07-cutover.md](07-cutover.md) | program criteria below, incl. both Linda probes | all |
 
 **Gate rule:** a part is done when its own Verification Criteria pass, verified in a
 *different session* than the one that implemented it (the repository's separation-of-duties
@@ -117,7 +136,8 @@ rule). Downstream work does not start before the upstream gate.
 3. Laptop offline → hub stays fully usable (reads, CI ingestion, web UI, both Lindas);
    laptop back → queued events drain in order, no loss, no duplication.
 4. A deploy run on builds produces its Agent HQ record within one minute (ties to
-   builds-stack criterion 2, same evidence).
+   builds-stack criterion 2, same evidence) — via the build spoke's loopback ingest once
+   part 5 is live.
 5. The web UI renders the plans table from a NAS-hosted browser at `192.168.0.178:5317`.
 6. Stopping the hub does not affect ZCode on the laptop (`/plan` applies locally; the
    `|| true` hook guard was already the floor — now nothing queues behind a dead hub).
@@ -127,6 +147,9 @@ rule). Downstream work does not start before the upstream gate.
    rebuilds the projections → the reads above are identical. The lens property, proven.
 9. **Rollback drill**: unset `AGENTHQ_HUB_URL` on the laptop, restart → the laptop serves
    as the hub again from its intact SQLite, nothing lost.
+10. **Build estate through the build spoke**: runner/stack health and integration runs are
+    visible at the hub; with the hub stopped, CI events queue in the spoke and drain on
+    return — `continue-on-error` is no longer the only safety.
 
 ## Invariants carried forward (the ones this plan must not break)
 
@@ -158,9 +181,15 @@ rule). Downstream work does not start before the upstream gate.
   any bind.
 
 Also supersedes, inside [conversation-enhancements-etc.md](../conversation-enhancements-etc.md):
-phase 3 (hook injection — becomes part 5 here, retargeted at the spoke) and phase 5 (Linda's
+phase 3 (hook injection — becomes part 6 here, retargeted at the spoke) and phase 5 (Linda's
 route — becomes part 2 here, simplified to name/password + external point). Record the
 supersession in that plan's Status Log when this umbrella is approved.
+
+Absorbs from nastv's builds-stack plan 4 its **mechanism** steps: the notify step's target
+becomes the build spoke's loopback ingest (part 5), and the hub-side ingestion/backfill work
+becomes the spoke reading its own machine's record files. The signal/noise classifier, the
+stability/attention views and Linda's tool surface remain nastv's. Record the supersession in
+their plan's Status Log when part 5 is approved.
 
 ## Status Log
 
