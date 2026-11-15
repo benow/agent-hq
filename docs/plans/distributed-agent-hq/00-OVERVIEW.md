@@ -122,10 +122,12 @@ rule). Downstream work does not start before the upstream gate.
       `AGENTS.infrastructure.md` last recorded `nuget.benow.ca` (BaGet, `nastv-nuget`).
       Confirm which is live, update the nastv record — that doc also still lacks the builds
       fleet row (part 6 fixes both together if not sooner).
-- [ ] Enabling fix: `PlanDirWatcher` is non-recursive, so directory plans (this umbrella,
-      and nastv's `builds-stack/`) are invisible to external-edit tracking. Make it watch
-      `docs/plans/**/*.md` (skip double-counting the `done/` archive move the pending branch
-      already handles) and add a test.
+- [x] Multi-file plan accommodation (delivered 2026-11-15, with the workflow import):
+      `PlanDirWatcher` watches `docs/plans/**/*.md` recursively; `POST /plans` with
+      `filePath` adopts a drafted file without rewriting; a plan directory's aggregator row
+      (alphabetically-first registered file — the `00-OVERVIEW.md` convention) aggregates
+      progress and hash across its part files, and a part registered as its own plan leaves
+      the umbrella's count; the `/plan:start` template documents the shape (pack v2).
 
 ## Program-level verification criteria
 
