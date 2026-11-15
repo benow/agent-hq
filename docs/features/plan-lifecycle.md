@@ -221,9 +221,20 @@ agent what the phase means and how to do the work.
 | `/plan done <file>` | `verified → done` | — | Closing out |
 | `/plan abandon <file> <reason>` | any → `abandoned` | yes | Superseded or no longer needed |
 
+Every command also accepts the colon spelling of its
+[workflow twin](plan-workflow.md) (`/plan:start`, `/plan:review`, `/plan:implement`,
+`/plan:verify`, `/plan:done`, `/plan:abandon`): the two spellings are one-to-one and move the
+hub identically — the colon form carries the worktree workflow, the space form is the state
+interface. When a plan is closed it may be archived to `docs/plans/done/<slug>.md`; the plans
+watcher re-points the registration at the archived copy, so closed plans stay addressable by
+slug and by `done/<slug>.md`.
+
 The `<file>` argument may be a slug, a path relative to the repository root, or an absolute path.
 It is resolved against the repository derived from the hook's working directory, then — for
-`start` and `implement` — against the calling session's own repository.
+`start` and `implement` — against the calling session's own repository. The working directory
+also resolves when the prompt is typed inside a ZCode worktree
+(`~/.zcode/worktrees/<repo-directory-name>/<worktree>`), which is how the
+[worktree plan workflow](plan-workflow.md) addresses its repository.
 
 Two behaviours are worth knowing because they are easy to trip over:
 

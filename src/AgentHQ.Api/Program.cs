@@ -22,6 +22,8 @@ public static class Program
     {
         if (args.Length > 0 && args[0] == "install-zcode")
             return AgentHQ.Commands.ZCode.Runner.Run(args.Skip(1).ToArray(), ResolveZCodeDbPath());
+        if (args.Length > 0 && args[0] == "sync-workflow")
+            return AgentHQ.Commands.ZCode.Runner.SyncWorkflow(args.Skip(1).ToArray());
         if (args.Length > 0 && args[0] == "--version")
         {
             Console.WriteLine(typeof(Program).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
@@ -76,7 +78,8 @@ public static class Program
                 AgentHqDbPath: Environment.GetEnvironmentVariable("AGENTHQ_DB")
                               ?? Path.Combine(DataDir, "agent-hq.sqlite"),
                 ZCodeDbPath: ResolveZCodeDbPath(),
-                StartWatchers: true),
+                StartWatchers: true,
+                WorktreesRoot: ResolveWorktreesRoot()),
                 Log.Logger);
             await app.RunAsync();
             return 0;
@@ -103,6 +106,20 @@ public static class Program
     public static string ResolveZCodeDbPath() => Environment.GetEnvironmentVariable("AGENTHQ_ZCODE_DB")
         ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             ".zcode", "cli", "db", "db.sqlite");
+
+    /// <summary>Root of the ZCode git-worktrees tree: worktree cwds under
+    /// <c>&lt;root&gt;/&lt;repo-directory-name&gt;/&lt;worktree&gt;</c> resolve back to the
+    /// registered repository with that directory name.</summary>
+    public static string ResolveWorktreesRoot()
+    {
+        var configured = Environment.GetEnvironmentVariable("AGENTHQ_WORKTREES_ROOT");
+        var path = string.IsNullOrWhiteSpace(configured)
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".zcode", "worktrees")
+            : configured.StartsWith("~/")
+                ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), configured[2..])
+                : configured;
+        return Path.GetFullPath(path);
+    }
 }
 
 /// <summary>
@@ -110,7 +127,7 @@ public static class Program
 /// process derives (reset per in-memory test host so hosts never share files).
 /// </summary>
 public sealed record AgentHqOptions(string AgentHqDbPath, string ZCodeDbPath, bool StartWatchers,
-    string? DataDir = null);
+    string? DataDir = null, string? WorktreesRoot = null);
 
 /// <summary>
 /// Host composition shared by the real host and the in-memory TestServer: services, endpoint
@@ -131,7 +148,8 @@ public static class AgentHqHost
             new AgentHqDb(options.AgentHqDbPath, logger.ForContext("Subsystem", "db")));
         builder.Services.AddSingleton(sp => new EventStore(sp.GetRequiredService<AgentHqDb>(),
             logger.ForContext("Subsystem", "events")));
-        builder.Services.AddSingleton(sp => new RepositoryStore(sp.GetRequiredService<AgentHqDb>()));
+        builder.Services.AddSingleton(sp => new RepositoryStore(sp.GetRequiredService<AgentHqDb>(),
+            options.WorktreesRoot));
         builder.Services.AddSingleton(sp => new SessionStore(sp.GetRequiredService<AgentHqDb>()));
         builder.Services.AddSingleton(sp => new PlanStore(sp.GetRequiredService<AgentHqDb>()));
         builder.Services.AddSingleton(sp => new ExchangeStore(sp.GetRequiredService<AgentHqDb>()));

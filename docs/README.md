@@ -18,6 +18,7 @@ point at the page that owns a topic.
 | Feature | What it covers | Read when |
 |---|---|---|
 | [Plan lifecycle](features/plan-lifecycle.md) | The states, who moves what, the `/plan` commands, verification and separation of duties, lessons | You are defining, running or reviewing plans |
+| [Plan workflow commands](features/plan-workflow.md) | The `/plan:*` worktree workflow, its one-to-one mapping onto the state commands, the plan file format, the sync verb | You are running or changing the worktree-based plan flow |
 | [Sessions](features/sessions.md) | How agent sessions are discovered and tracked, digests, schema guard, degraded modes | You want to see what agents are doing, or session tracking looks empty |
 | [Events and the activity feed](features/events.md) | The durable event log, SSE streaming with replay, event types, the activity panel | You are integrating with live updates, or investigating missing feed entries |
 | [MCP tools](features/mcp.md) | The project-manager façade: every tool, the orientation rhythm, a worked conversation | You are wiring a project-manager agent to Agent HQ |

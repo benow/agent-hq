@@ -6,8 +6,13 @@ namespace AgentHQ.Infrastructure.Stores;
 public sealed class RepositoryStore
 {
     private readonly AgentHqDb _db;
+    private readonly string? _worktreesRoot;
 
-    public RepositoryStore(AgentHqDb db) => _db = db;
+    public RepositoryStore(AgentHqDb db, string? worktreesRoot = null)
+    {
+        _db = db;
+        _worktreesRoot = string.IsNullOrWhiteSpace(worktreesRoot) ? null : Path.GetFullPath(worktreesRoot).TrimEnd('/');
+    }
 
     public async Task<RepositoryRow> RegisterAsync(string rootPath, string provider, string? externalId,
         bool isDefault = false, string plansDir = "docs/plans")
@@ -67,13 +72,26 @@ public sealed class RepositoryStore
     }
 
     /// <summary>Resolves a repository from a working directory: the longest registered root
-    /// path that is a prefix of <paramref name="cwd"/>, if any.</summary>
+    /// path that is a prefix of <paramref name="cwd"/>; or, when the cwd is inside a ZCode
+    /// worktree (<c>&lt;worktrees-root&gt;/&lt;repo-directory-name&gt;/&lt;worktree&gt;</c>),
+    /// the registered repository whose root directory has that name. The worktree mapping is a
+    /// fallback: a repository registered at a worktree path still resolves by prefix first.
+    /// With two registrations sharing a directory name, the longer root path wins.</summary>
     public async Task<RepositoryRow?> ResolveByCwdAsync(string cwd)
     {
         var all = await ListAsync();
         var normalized = cwd.TrimEnd('/');  // keep leading
-        return all
+        var direct = all
             .Where(r => normalized == r.RootPath || normalized.StartsWith(r.RootPath + "/"))
+            .OrderByDescending(r => r.RootPath.Length)
+            .FirstOrDefault();
+        if (direct is not null || _worktreesRoot is null || !normalized.StartsWith(_worktreesRoot + "/"))
+            return direct;
+
+        var leaf = normalized[(_worktreesRoot.Length + 1)..].Split('/')[0];
+        if (leaf.Length == 0) return null;
+        return all
+            .Where(r => Path.GetFileName(r.RootPath.TrimEnd('/')) == leaf)
             .OrderByDescending(r => r.RootPath.Length)
             .FirstOrDefault();
     }
