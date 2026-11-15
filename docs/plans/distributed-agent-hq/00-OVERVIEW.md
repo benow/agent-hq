@@ -1,4 +1,4 @@
-# distributed-hub — Agent HQ becomes hub-and-spoke: the hub on builds, spokes beside the agents
+# distributed-agent-hq — Agent HQ becomes hub-and-spoke: the hub on builds, spokes beside the agents
 
 Status: drafted · Umbrella plan · Started: 2026-11-15
 Owner: Andy (decisions) · Drafted from: Linda's single-file draft (`docs/plans/distributed-hub.md`,
