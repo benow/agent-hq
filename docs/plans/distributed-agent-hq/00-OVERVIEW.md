@@ -112,7 +112,7 @@ topology; it is the rollback.
 *different session* than the one that implemented it (the repository's separation-of-duties
 rule). Downstream work does not start before the upstream gate.
 
-## Prerequisites (step 0)
+## Steps
 
 - [ ] Merge `zcode/plan-workflow-support` (8636ad8 — the `/plan:*` colon pack nastv is
       already cut over to) and deploy. Everything here builds on that command path.
