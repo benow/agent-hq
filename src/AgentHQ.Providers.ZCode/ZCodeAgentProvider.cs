@@ -15,7 +15,7 @@ public sealed class ZCodeAgentProvider : IAgentProvider
 {
     /// <summary>Latest ZCode schema migration the provider has been tested against
     /// (marker prefix parsed from schema_migration.id, e.g. "0024_…" → 24).</summary>
-    public const int TestedZCodeSchemaVersion = 24;
+    public const int TestedZCodeSchemaVersion = 25;
 
     private readonly string _connectionString;
     private readonly Serilog.ILogger _log;

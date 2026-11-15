@@ -120,7 +120,7 @@ startup:
 | Marker newer than tested | `schema-ahead` | Session features return empty results; a warning is logged |
 | Database or marker table missing, or unreadable | `missing` | Same degraded behaviour |
 
-The tested version is the constant `TestedZCodeSchemaVersion` in that provider (24 at the time
+The tested version is the constant `TestedZCodeSchemaVersion` in that provider (25 at the time
 of writing). The guard never throws: a degraded provider is a service that still runs.
 
 ## When ZCode is missing
