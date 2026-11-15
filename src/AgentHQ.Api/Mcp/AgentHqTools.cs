@@ -54,7 +54,7 @@ public static class AgentHqTools
             set.Contains("reasoning"), set.Contains("tool"), set.Contains("steps")));
     }
 
-    [McpServerTool, Description("Submit a plan. Convention sections: Goal, Context, Steps (markdown checkboxes = progress), Dependencies, Verification Criteria, Documentation, Status Log. Draft against list_lessons so past oversight classes are designed out. Returns slug + soft-validation warnings.")]
+    [McpServerTool, Description("Submit a plan (markdown shape: the hub writes docs/plans/<slug>.md). Convention sections: Goal, Context, Steps (markdown checkboxes = progress), Dependencies, Verification Criteria, Documentation, Status Log. Draft against list_lessons so past oversight classes are designed out. Returns slug + soft-validation warnings. To register a plan file that already exists on disk (a drafted single file or a multi-file plan's overview), use the hub UI or POST /plans with filePath — the hub adopts it without writing; the MCP tool does not take filePath to keep this call's contract stable.")]
     public static async Task<object> SubmitPlan(string repo, string name, string markdown,
         RepositoryStore repos, PlanService plans)
     {

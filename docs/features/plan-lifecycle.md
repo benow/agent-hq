@@ -43,6 +43,29 @@ Each repository can accumulate a lessons file at `docs/plans/lessons.md`: entrie
 and exposes them to the project-manager agent when it drafts verification criteria. The
 capture-and-consult loop is described in [the bottom of this page](#lessons-the-memory-that-lives-in-the-repository).
 
+## Multi-file plans
+
+A plan is normally one file, `docs/plans/<slug>.md`. A plan big enough to gate part-by-part
+may be a **directory**: `docs/plans/<name>/00-OVERVIEW.md` is the plan of record and part
+files (`01-…md`, `02-…md`) sit beside it.
+
+- **Registration adopts, never rewrites**: `POST /plans` with `filePath` (repo- or
+  plans-relative) registers an existing drafted file as-is; the hub writes nothing.
+  Registering the same path again is a no-op (the file is the identity). `submit_plan`
+  (markdown) remains the path for plans that do not exist on disk yet.
+- **The aggregator**: within a plan directory, exactly one registered row aggregates the
+  whole directory — the alphabetically-first file path (the `00-OVERVIEW.md` convention).
+  Its progress counts the `## Steps` checkboxes of every markdown file beside it that is not
+  itself registered; its content hash covers those files' names and hashes, so any edit
+  anywhere in the directory bumps its version. Every other registered row in that directory
+  is single-file and tracks only its own checkboxes — a part registered as its own plan when
+  its gate opens leaves the umbrella's count.
+- **The `done/` archive is not a plan directory**: archived plans keep single-file semantics.
+  A move into `done/` re-points the registration whether it arrives as a paired rename or a
+  deletion.
+- `/plan` commands resolve a directory path the same as a flat one:
+  `/plan:start docs/plans/<name>/00-OVERVIEW.md`.
+
 ## States
 
 | State | Meaning | Who usually moves it out |

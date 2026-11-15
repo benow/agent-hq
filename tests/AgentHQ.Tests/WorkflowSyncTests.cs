@@ -29,7 +29,7 @@ public class WorkflowSyncTests : IDisposable
         foreach (var file in files)
         {
             var text = File.ReadAllText(file);
-            Assert.StartsWith("<!-- agent-hq v1 -->", text);
+            Assert.StartsWith("<!-- agent-hq v2 -->", text);
             Assert.Contains("name: plan:", text);
         }
         // abort was renamed: the pack must not carry it under the old name.
@@ -70,7 +70,7 @@ public class WorkflowSyncTests : IDisposable
         var exit = WorkflowSync.Run(_repo, force: true);
 
         Assert.Equal(0, exit);
-        Assert.StartsWith("<!-- agent-hq v1 -->", File.ReadAllText(Path.Combine(DestDir, "start.md")));
+        Assert.StartsWith("<!-- agent-hq v2 -->", File.ReadAllText(Path.Combine(DestDir, "start.md")));
     }
 
     private string[] Snapshot() => Directory.GetFiles(DestDir, "*", SearchOption.AllDirectories)

@@ -1,4 +1,4 @@
-<!-- agent-hq v1 -->
+<!-- agent-hq v2 -->
 ---
 name: plan:verify
 description: Adversarially verify the plan — re-run every automatable check, record per-criterion evidence, deliver a verdict

@@ -1,4 +1,4 @@
-<!-- agent-hq v1 -->
+<!-- agent-hq v2 -->
 ---
 name: plan:abandon
 description: Abandon a plan — remove its worktree and branch, archive the plan, keep the record

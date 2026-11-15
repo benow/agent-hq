@@ -1,4 +1,4 @@
-<!-- agent-hq v1 -->
+<!-- agent-hq v2 -->
 ---
 name: plan:start
 description: Start a plan — draft it on main, create its namesake worktree, keep Agent HQ tracking it
@@ -8,7 +8,9 @@ argument-hint: <name> [title words...]
 # /plan:start — open a plan (worktree isolation)
 
 One identifier everywhere: the plan name is the worktree name, the branch
-`zcode/<name>`, and the plan file `docs/plans/<name>.md`. THE PLAN LIVES ON
+`zcode/<name>`, and the plan file `docs/plans/<name>.md` (single file) or
+`docs/plans/<name>/00-OVERVIEW.md` (multi-file plan: the overview is the plan of
+record, parts are `01-…md`, `02-…md` beside it). THE PLAN LIVES ON
 MAIN (committed locally, pushed only at /plan:done) — it is the source of
 truth and the durable record even if the plan is later abandoned. CODE lives
 in the worktree. Never write the plan file inside the worktree.
@@ -33,11 +35,16 @@ authority: never write a `Status:` line into the plan file.
 - Call the git-worktrees `worktrees_list` tool. A worktree named `<name>` or
   branch `zcode/<name>` with a `plan:` task already exists → offer to resume
   it (/plan:review) instead.
-- `docs/plans/<name>.md` or `docs/plans/done/<name>.md` exists on main → name
-  collision; ask for a different name.
+- `docs/plans/<name>.md`, `docs/plans/<name>/`, or `docs/plans/done/<name>.md`
+  exists on main → name collision; ask for a different name.
 
 ## 3. Draft the plan ON MAIN
-At `<main-checkout>/docs/plans/<name>.md`:
+Single file at `<main-checkout>/docs/plans/<name>.md`, or — for a plan big
+enough to gate part-by-part — a directory `docs/plans/<name>/` whose
+`00-OVERVIEW.md` carries the decision, architecture, part index with gates,
+program criteria and Status Log, and whose part files (`01-…md` …) each carry
+Goal/Context/Decisions/Steps/Verification Criteria/Documentation/Status Log of
+their own. Either way, in the file(s):
 - Header block first: `Worktree: <name> · Branch: zcode/<name> · Started:
   <date>` — mechanical facts only; status lives in Agent HQ.
 - Then the standard sections: `## Goal`, `## Context`, `## Decision` (what we
@@ -45,9 +52,12 @@ At `<main-checkout>/docs/plans/<name>.md`:
   recommendation), `## Steps` (markdown checkboxes — they drive Agent HQ's
   progress count), `## Dependencies`, `## Verification Criteria` (concrete
   checks /plan:verify will audit), `## Documentation`, `## Status Log`.
-  Open questions listed explicitly.
+  Open questions listed explicitly. In a multi-file plan, checkboxes in every
+  part file count toward the overview plan's progress; a part file may later be
+  registered as its own plan when its gate opens, and then tracks itself.
 - Commit locally with an explicit pathspec — never push, never a bare commit:
   `git -C <main> commit -m "plan: <name> — draft, <title>" -- docs/plans/<name>.md`
+  (or `-- docs/plans/<name>/` for a directory plan)
 
 ## 4. Create the worktree
 Call the git-worktrees `worktrees_create` tool with `{name: "<name>"}` —
@@ -62,10 +72,14 @@ no agentId. This label is the reverse-lookup registry for /plan:review,
 /plan:implement, /plan:verify, /plan:done and /plan:abandon.
 
 ## 6. Keep Agent HQ in the loop
-If the plan is not registered yet, register it now (hub UI, or your project
-manager via `submit_plan`) so progress and state are tracked from the first
-draft. Discoveries that change the plan update MAIN's plan file with a local
-pathspec commit as they land.
+If the plan is not registered yet, register it now so progress and state are
+tracked from the first draft. A drafted file (single or directory plan) is
+REGISTERED, not rewritten: hub UI, or `POST /plans` with
+`{"repo": "<repo>", "name": "<name>", "filePath": "docs/plans/<name>.md"}`
+(for a directory plan, the overview file's path) — the hub adopts the file
+as-is; `submit_plan` (markdown) is for plans that do not exist on disk yet.
+Re-registering the same path is a no-op. Discoveries that change the plan
+update MAIN's plan file with a local pathspec commit as they land.
 
 ## 7. Scope it with the user
 Walk the draft; record every decision in the plan file as it lands, each

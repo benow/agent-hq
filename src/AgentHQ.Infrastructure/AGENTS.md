@@ -44,7 +44,7 @@ a duplicate event (missed NoteSelfWrite) or a lost external edit (skipped hash u
 
 | Watcher | Covers | Trigger | Then |
 |---|---|---|---|
-| `PlanDirWatcher` | `<repo>/docs/plans/*.md`, non-recursive | changed / created / renamed | 500 ms debounce → hash → external edit bumps version + emits `plan.updated`; `lessons.md` re-indexes instead |
+| `PlanDirWatcher` | `<repo>/docs/plans/**/*.md`, **recursive** (multi-file plans; 64 KB buffer) | changed / created / renamed / deleted | 500 ms debounce → hash → external edit bumps version + emits `plan.updated`; `lessons.md` re-indexes instead |
 | `ZCodeDbWatcher` | `db.sqlite*` in the ZCode db directory | changed / created / renamed | 500 ms debounce → `PRAGMA data_version` → only if changed, run the session diff |
 
 - **`data_version` is per-connection.** The probe connection is opened once and held for the
@@ -58,7 +58,12 @@ a duplicate event (missed NoteSelfWrite) or a lost external edit (skipped hash u
 - Watcher callbacks must never throw: log and return. A throwing callback on a `FileSystemWatcher`
   thread takes down the process or silently unsubscribes.
 - Watcher file matching for plans is by full path, falling back to filename — a renamed plan file
-  is still matched to its row.
+  is still matched to its row. An edit inside a plan directory additionally bumps the
+  directory's **aggregator** row (alphabetically-first registered file there — the
+  `00-OVERVIEW.md` convention); other registered rows in that directory are single-file
+  (see docs/features/plan-lifecycle.md, "Multi-file plans"). Recursive watching pairs a move
+  into `done/` into one Renamed event (no Deleted for the source) — the archive re-point
+  hangs off both the rename and the delete.
 
 ### Watch out for recursive loops
 

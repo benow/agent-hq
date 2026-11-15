@@ -13,7 +13,7 @@ namespace AgentHQ.Commands.ZCode;
 /// </summary>
 public static class WorkflowSync
 {
-    public const string CommandVersion = "1";
+    public const string CommandVersion = "2";
     private static readonly Regex Marker = new(@"^<!-- agent-hq v(\d+) -->", RegexOptions.Compiled);
 
     public static int Run(string repo, bool force, string? sourceDir = null)

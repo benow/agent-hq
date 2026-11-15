@@ -1,4 +1,4 @@
-<!-- agent-hq v1 -->
+<!-- agent-hq v2 -->
 ---
 name: plan:done
 description: Finish a verified plan — audit completeness, archive it, merge the worktree branch, push once, clean up every trace

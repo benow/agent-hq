@@ -131,15 +131,32 @@ public static class ApiEndpoints
     {
         app.MapPost("/plans", async (SubmitPlanRequest req, RepositoryStore repos, PlanService plans) =>
         {
-            if (string.IsNullOrWhiteSpace(req.Name) || string.IsNullOrWhiteSpace(req.Markdown))
-                return Results.BadRequest(new { error = "name and markdown are required" });
+            if (string.IsNullOrWhiteSpace(req.Name))
+                return Results.BadRequest(new { error = "name is required" });
             var repo = await repos.GetAsync(req.Repo);
             if (repo is null) return Results.BadRequest(new { error = $"unknown repository '{req.Repo}'" });
             try
             {
-                var (plan, warnings) = await plans.SubmitAsync(repo, req.Name, req.Markdown, req.Slug);
-                return Results.Created($"/plans/{plan.Id}",
-                    new { plan.Id, plan.Slug, plan.Status, warnings, file = plan.FilePath });
+                // Two entry shapes, deliberately one endpoint: filePath adopts an existing
+                // drafted file (single- or multi-file plan) without writing anything; markdown
+                // submits and the hub writes docs/plans/<slug>.md.
+                if (!string.IsNullOrWhiteSpace(req.FilePath))
+                {
+                    var warnings = new List<string>();
+                    if (!string.IsNullOrWhiteSpace(req.Markdown))
+                        warnings.Add("markdown ignored: an existing file was adopted (filePath)");
+                    var (plan, adoptWarnings, existing) =
+                        await plans.RegisterExistingAsync(repo, req.FilePath.Trim(), req.Name, req.Slug);
+                    warnings.AddRange(adoptWarnings);
+                    return Results.Json(
+                        new { plan.Id, plan.Slug, plan.Status, adopted = true, existing, warnings, file = plan.FilePath },
+                        statusCode: existing ? 200 : 201);
+                }
+                if (string.IsNullOrWhiteSpace(req.Markdown))
+                    return Results.BadRequest(new { error = "markdown is required when filePath is not supplied" });
+                var (created, createWarnings) = await plans.SubmitAsync(repo, req.Name, req.Markdown, req.Slug);
+                return Results.Created($"/plans/{created.Id}",
+                    new { created.Id, created.Slug, created.Status, warnings = createWarnings, file = created.FilePath });
             }
             catch (PlanService.SlugTakenException ex)
             {
@@ -328,7 +345,7 @@ public static class ApiEndpoints
     }
 
     public record RegisterRepoRequest(string? RootPath, bool? IsDefault);
-    public record SubmitPlanRequest(string? Repo, string? Name, string? Markdown, string? Slug);
+    public record SubmitPlanRequest(string? Repo, string? Name, string? Markdown, string? Slug, string? FilePath);
     public record RepointRequest(string? Path, string? By);
     public record UpdateContentRequest(string? Markdown);
     public record PatchPlanRequest(long? Priority, string? SessionId);

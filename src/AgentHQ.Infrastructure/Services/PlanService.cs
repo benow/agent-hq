@@ -88,23 +88,7 @@ public sealed class PlanService
     public async Task<(PlanRow Plan, IReadOnlyList<string> Warnings)> SubmitAsync(
         RepositoryRow repo, string name, string markdown, string? slug = null)
     {
-        // D10: a chosen slug is used verbatim and refused when taken — it never gets a -2 suffix
-        // (the author asked for that name). The derived default keeps the suffix behaviour.
-        string chosen;
-        if (slug is not null)
-        {
-            if (!PlanSlug.IsValid(slug))
-                throw new ArgumentException(
-                    $"slug '{slug}' is not a valid plan slug (lowercase letters, digits and '-', starting with a letter or digit)",
-                    nameof(slug));
-            if (await _plans.SlugTakenAsync(repo.Id, slug))
-                throw new SlugTakenException(slug);
-            chosen = slug;
-        }
-        else
-        {
-            chosen = PlanSlug.Derive(name, s => _plans.SlugTakenAsync(repo.Id, s).GetAwaiter().GetResult());
-        }
+        var chosen = await ChooseSlugAsync(repo, name, slug);
         var dir = Path.Combine(repo.RootPath, repo.PlansDir);
         Directory.CreateDirectory(dir);
         var filePath = Path.Combine(dir, $"{chosen}.md");
@@ -149,6 +133,171 @@ public sealed class PlanService
         });
         _log.Information("plan submitted {Slug} in {Repo}", chosen, repo.Id);
         return (plan, warnings);
+    }
+
+    /// <summary>
+    /// D10: a chosen slug is used verbatim and refused when taken — it never gets a -2 suffix
+    /// (the author asked for that name). The derived default keeps the suffix behaviour.
+    /// </summary>
+    private async Task<string> ChooseSlugAsync(RepositoryRow repo, string name, string? slug)
+    {
+        if (slug is not null)
+        {
+            if (!PlanSlug.IsValid(slug))
+                throw new ArgumentException(
+                    $"slug '{slug}' is not a valid plan slug (lowercase letters, digits and '-', starting with a letter or digit)",
+                    nameof(slug));
+            if (await _plans.SlugTakenAsync(repo.Id, slug))
+                throw new SlugTakenException(slug);
+            return slug;
+        }
+        return PlanSlug.Derive(name, s => _plans.SlugTakenAsync(repo.Id, s).GetAwaiter().GetResult());
+    }
+
+    /// <summary>
+    /// Registers a plan file that already exists on disk (adopt — nothing is written). This is
+    /// how a drafted plan enters the lifecycle without submit rewriting it: a single drafted
+    /// file, or a multi-file plan registered at its overview. The path rules are
+    /// <see cref="RepointFileAsync"/>'s: an existing markdown file under the repository's plans
+    /// directory (a repo-relative or plans-relative path). A file that is already registered is
+    /// returned as-is — idempotent by path, the file is the identity. When the file sits in a
+    /// direct subdirectory of the plans directory (not <c>done/</c>), the row is a directory
+    /// plan: its progress and hash aggregate every sibling markdown file that is not itself
+    /// registered, and sibling directory plans are refreshed (their exclusion set changed).
+    /// </summary>
+    public async Task<(PlanRow Plan, IReadOnlyList<string> Warnings, bool Existing)> RegisterExistingAsync(
+        RepositoryRow repo, string path, string name, string? slug = null)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            throw new ArgumentException("name is required", nameof(name));
+        var root = Path.GetFullPath(repo.RootPath).TrimEnd('/');
+        var plansDir = Path.GetFullPath(Path.Combine(root, repo.PlansDir)).TrimEnd('/');
+        string target;
+        if (Path.IsPathRooted(path))
+        {
+            target = Path.GetFullPath(path);
+        }
+        else
+        {
+            // Accept both repo-relative ("docs/plans/x/00-OVERVIEW.md") and plans-relative
+            // ("x/00-OVERVIEW.md"); prefer whichever lands inside the plans directory.
+            var asRepo = Path.GetFullPath(Path.Combine(root, path));
+            target = asRepo.StartsWith(plansDir + "/", StringComparison.Ordinal)
+                ? asRepo
+                : Path.GetFullPath(Path.Combine(plansDir, path));
+        }
+        if (!target.StartsWith(plansDir + "/", StringComparison.Ordinal))
+            throw new ArgumentException(
+                $"'{path}' does not resolve inside the plans directory {plansDir}; pass a repo-relative or plans-relative path",
+                nameof(path));
+        if (!target.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException($"'{target}' is not a markdown file", nameof(path));
+        if (!File.Exists(target))
+            throw new ArgumentException(
+                $"no file at {target} — draft the plan file first, then register it (submit creates its own file; adopt does not)",
+                nameof(path));
+
+        var holder = await _plans.FindByFilePathAsync(repo.Id, target);
+        if (holder is not null) return (holder, Array.Empty<string>(), true);
+
+        var chosen = await ChooseSlugAsync(repo, name, slug);
+        var markdown = await File.ReadAllTextAsync(target);
+        var all = await _plans.ListAsync(repoId: repo.Id);
+        var targetDir = Path.GetDirectoryName(target)!;
+        // The aggregator rule, evaluated with this file virtually included: a file in a plan
+        // directory aggregates the directory when it is alphabetically first there (the
+        // 00-OVERVIEW.md convention); any other registered file tracks only itself.
+        var isAggregator = PlanDirWatcher.AggregatorIn(
+            all.Append(new PlanRow { Id = "new", FilePath = target }).ToList(), targetDir, plansDir)?.FilePath == target;
+        string hash;
+        PlanProgress progress;
+        if (isAggregator)
+        {
+            var state = await PlanDirWatcher.DirectoryStateAsync(targetDir, all, target);
+            hash = state.Hash;
+            progress = state.Progress;
+        }
+        else
+        {
+            hash = PlanDirWatcher.ContentHash(markdown);
+            progress = PlanDocument.Progress(markdown);
+        }
+        var plan = new PlanRow
+        {
+            Id = Guid.NewGuid().ToString(),
+            Slug = chosen,
+            Name = name,
+            RepositoryId = repo.Id,
+            FilePath = target,
+            Status = PlanStatus.Submitted.Code(),
+            ContentHash = hash,
+            Checked = progress.Checked,
+            Total = progress.Total,
+            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+        };
+        try
+        {
+            await _plans.InsertAsync(plan);
+        }
+        catch (Microsoft.Data.Sqlite.SqliteException) when (slug is not null)
+        {
+            if (_plans.SlugTakenAsync(repo.Id, chosen).GetAwaiter().GetResult())
+                throw new SlugTakenException(chosen);
+            throw;
+        }
+        var warnings = PlanDocument.MissingSections(markdown)
+            .Select(s => $"plan is missing the '{s}' section (soft validation)")
+            .ToList();
+        await _events.AppendAsync(EventTypes.PlanCreated, new
+        {
+            planId = plan.Id, slug = chosen, name, repositoryId = repo.Id, status = plan.Status,
+            progress = new { checkedCount = progress.Checked, total = progress.Total }, registeredFrom = target
+        });
+        _log.Information("plan {Slug} registered from existing file {File} in {Repo}", chosen, target, repo.Id);
+        await RefreshPlanDirectoryAsync(repo, targetDir, plan.Id);
+        return (plan, warnings, false);
+    }
+
+    /// <summary>
+    /// A registration in a plan directory can change which row aggregates the directory (and
+    /// every sibling's exclusion set). Recompute every other registered row in that directory
+    /// under the aggregator rule and bump the ones whose state changed.
+    /// </summary>
+    private async Task RefreshPlanDirectoryAsync(RepositoryRow repo, string planDir, string exceptPlanId)
+    {
+        var plansDir = Path.GetFullPath(Path.Combine(repo.RootPath, repo.PlansDir)).TrimEnd('/');
+        var all = await _plans.ListAsync(repoId: repo.Id);
+        var aggregator = PlanDirWatcher.AggregatorIn(all, planDir, plansDir);
+        foreach (var sibling in all.Where(s => s.Id != exceptPlanId
+                     && string.Equals(Path.GetDirectoryName(s.FilePath), planDir, StringComparison.Ordinal)))
+        {
+            string hash;
+            PlanProgress progress;
+            if (aggregator?.Id == sibling.Id)
+            {
+                var state = await PlanDirWatcher.DirectoryStateAsync(planDir, all, sibling.FilePath);
+                hash = state.Hash;
+                progress = state.Progress;
+            }
+            else
+            {
+                if (!File.Exists(sibling.FilePath)) continue;
+                var content = await File.ReadAllTextAsync(sibling.FilePath);
+                hash = PlanDirWatcher.ContentHash(content);
+                progress = PlanDocument.Progress(content);
+            }
+            if (hash == sibling.ContentHash) continue;
+            var updated = await _plans.UpdateContentAsync(sibling.Id, hash, progress, externalEdit: true);
+            if (updated is null) continue;
+            await _events.AppendAsync(EventTypes.PlanUpdated, new
+            {
+                planId = updated.Id, slug = updated.Slug, repositoryId = updated.RepositoryId,
+                version = updated.Version,
+                progress = new { checkedCount = updated.Checked, total = updated.Total },
+                reason = "sibling-registered"
+            });
+        }
     }
 
     /// <summary>A chosen slug (D10) that a plan in the repository already uses.</summary>
@@ -244,9 +393,30 @@ public sealed class PlanService
         var watcher = WatcherFor(plan.RepositoryId);
         watcher?.NoteSelfWrite();
         await File.WriteAllTextAsync(plan.FilePath, markdown);
-        var progress = PlanDocument.Progress(markdown);
-        // Self-write: hash + progress update in the same step, no version bump, no event.
-        return await _plans.UpdateContentAsync(plan.Id, PlanDirWatcher.ContentHash(markdown), progress, externalEdit: false)
+        // Self-write: hash + progress update in the same step, no version bump, no event. The
+        // aggregator of a plan directory carries the directory's aggregate state; every other
+        // registered row there is single-file.
+        string hash;
+        PlanProgress progress;
+        var repo = await _repositories.GetAsync(plan.RepositoryId);
+        var plansDir = repo is null
+            ? watcher?.PlansDirAbsolute
+            : Path.GetFullPath(Path.Combine(repo.RootPath, repo.PlansDir)).TrimEnd('/');
+        var dir = Path.GetDirectoryName(plan.FilePath);
+        var all = await _plans.ListAsync(repoId: plan.RepositoryId);
+        var aggregator = dir is null || plansDir is null ? null : PlanDirWatcher.AggregatorIn(all, dir, plansDir);
+        if (aggregator?.Id == plan.Id && dir is not null)
+        {
+            var state = await PlanDirWatcher.DirectoryStateAsync(dir, all, plan.FilePath);
+            hash = state.Hash;
+            progress = state.Progress;
+        }
+        else
+        {
+            hash = PlanDirWatcher.ContentHash(markdown);
+            progress = PlanDocument.Progress(markdown);
+        }
+        return await _plans.UpdateContentAsync(plan.Id, hash, progress, externalEdit: false)
                ?? (await _plans.GetAsync(plan.Id))!;
     }
 
