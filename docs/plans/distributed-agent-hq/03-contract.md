@@ -86,8 +86,11 @@ Rules that are the contract:
   kit: a fixture any hub implementation runs to prove the contract — the hub's own test
   suite runs it, and a future third-party hub could too).
 - **Publishing**: pack + push to nuget.benow.ca from CI on tag (`v*`); branch builds get
-  prerelease suffixes. `nuget.config` in-repo points at the feed; credentials via the
-  existing CI secret convention. Dependency rule: the package references nothing from this
+  prerelease suffixes. The push credential is the BaGetter global API key (read back from
+  the `nastv-nuget` container on the VPS; BaGetter has no key-issuing UI), stored as the
+  repo Actions secret **`BENOW_NUGET_API_KEY`** (set 2026-11-16) and referenced only in the
+  tag-push workflow — never in `nuget.config` or the repo. `nuget.config` in-repo points at
+  the feed; pulls are anonymous. Dependency rule: the package references nothing from this
   solution except the shared models assembly — and even that is repackaged, not projected,
   so consumers see one DLL.
 - The **hub implements** the routes in `AgentHQ.Api` behind part 2's roles; the logic lives
