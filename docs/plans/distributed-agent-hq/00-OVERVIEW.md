@@ -263,3 +263,9 @@ their plan's Status Log when part 5 is approved.
   `AGENTS.deploy.md:24`). Andy's recollection conflated the two; nastv's
   `AGENTS.infrastructure.md:136` record was already correct, so no update was needed
   there. Part 3's feed references corrected to nuget.benow.ca in this pass.
+- 2026-11-16 — PART 1 IMPLEMENTED (branch zcode/distributed-hub-part1, commit f80e4c2;
+  evidence in [01-hub-runtime.md](01-hub-runtime.md) Status Log). Container hub + Postgres
+  sidecar live on builds at `builds:~/apps/agent-hq`, loopback-bound, healthy; nightly
+  pg_dump timer installed (first dump verified). Full suite green; Postgres-bound tests
+  6/6 via Testcontainers. Awaiting verification by a different session per the gate rule —
+  parts 2+ do not start before that.

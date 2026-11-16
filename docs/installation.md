@@ -20,6 +20,21 @@ web UI is plain HTML/CSS/JS), and no build step for the front end.
 
 ## Install
 
+The steps below install the **laptop shape**: the systemd user unit with SQLite, beside your
+worker agent. The always-on **hub on a server** (the builds machine) installs differently —
+Docker + PostgreSQL sidecar, one command:
+
+```bash
+git clone <this-repository-url> ~/apps/agent-hq && cd ~/apps/agent-hq
+echo "AGENTHQ_PG_PASSWORD=$(openssl rand -hex 16)" > .env && chmod 600 .env
+scripts/agent-hq-deploy.sh container up
+# http://127.0.0.1:5317/health answers; see docs/operations.md ("Container mode")
+```
+
+That stack keeps the port loopback-only and has no ZCode integration inside the container —
+repositories and sessions arrive via spokes (see
+[docs/plans/distributed-agent-hq](plans/distributed-agent-hq/00-OVERVIEW.md)).
+
 ### 1. Clone
 
 ```bash
@@ -111,8 +126,11 @@ All configuration is environment variables. Defaults are correct for a single-us
 | Variable | Default | Meaning |
 |---|---|---|
 | `AGENTHQ_PORT` | `5317` | Listen port; the host always binds `127.0.0.1` and never `*` |
+| `AGENTHQ_URL` | `http://127.0.0.1:$AGENTHQ_PORT` | Full bind URL; overrides `AGENTHQ_PORT` (used by container mode) |
 | `AGENTHQ_DATA` | `~/.local/share/agent-hq` | Data directory (database, logs) |
 | `AGENTHQ_DB` | `$AGENTHQ_DATA/agent-hq.sqlite` | Agent HQ's own SQLite database |
+| `AGENTHQ_DB_PROVIDER` | `sqlite` | `postgres` switches the hub to the PostgreSQL stores (`AgentHqPgDb`) |
+| `AGENTHQ_PG_CONNSTR` | unset | PostgreSQL connection string; required when `AGENTHQ_DB_PROVIDER=postgres` |
 | `AGENTHQ_ZCODE_DB` | `~/.zcode/cli/db/db.sqlite` | ZCode's session index, opened **read-only** |
 | `AGENTHQ_LOG_ASPNET` | `Warning` | Framework log floor; `Information` restores per-request lines |
 | `AGENTHQ_LIVE` | unset | `1` enables the read-only live smoke tests in the test suite |

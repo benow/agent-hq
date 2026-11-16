@@ -54,6 +54,51 @@ Kestrel opens the port; the deploy reports how long it took. A warm restart is f
 The deploy refuses to start if the port is held by something other than the service — a stray
 `dev-run.sh` instance, say — because health would otherwise answer for the wrong process.
 
+## Container mode (the hub on builds)
+
+The hub can run as a **container + PostgreSQL sidecar** instead of the systemd unit — this is
+the runtime for the always-on hub on the builds machine
+([docs/plans/distributed-agent-hq](plans/distributed-agent-hq/00-OVERVIEW.md), part 1). It is
+the same binary and the same deploy script; only storage and packaging change:
+
+```bash
+cd ~/apps/agent-hq            # a clone of the repository on the target machine
+set -a; . ./.env; set +a      # .env holds AGENTHQ_PG_PASSWORD (compose + script read it)
+scripts/agent-hq-deploy.sh container up     # build image (tag = git sha), compose up, health-wait, check
+scripts/agent-hq-deploy.sh container check  # the same check gate as systemd mode
+scripts/agent-hq-deploy.sh container logs   # docker compose logs
+scripts/agent-hq-deploy.sh container down   # stop; volumes are kept
+```
+
+- **compose.yaml** defines two services: `hub` (the `agent-hq` image) and `db`
+  (postgres:17-alpine, healthchecked). The hub starts only after the database is healthy.
+- **Volumes, not directories**, carry the state: `agent-hq-pgdata` (the PostgreSQL data) and
+  `agent-hq-data` (logs and exchange blobs, mounted at `/data`). The "everything under
+  `$AGENTHQ_DATA`" rule carries over as "everything in the named volumes".
+- The port mapping is **`127.0.0.1:5317` on the host** — loopback-only until authentication
+  lands (part 2). Widening it is a recorded security decision, never a config default.
+- No ZCode integration inside the container: the provider degrades to `missing` by design
+  (repositories and sessions arrive via spokes from part 4 onward).
+- A failed health wait rolls the stack back (`compose down`, volumes untouched) and the
+  script exits non-zero: a deploy that rolled back is not a deploy.
+- SIGTERM gets a 10 s grace period (`stop_grace_period`); the host drains and exits 0.
+
+### Backups
+
+Everything Agent HQ owns is the single SQLite file plus the logs. For a consistent copy:
+
+```bash
+sqlite3 ~/.local/share/agent-hq/agent-hq.sqlite ".backup '/path/to/backup.sqlite'"
+```
+
+In container mode the database is PostgreSQL; the nightly `agent-hq-pg-backup.timer`
+(user timer on the target machine, 04:30, 14 retained) writes a dated `pg_dump` to
+`~/apps/agent-hq/backups/<date>/agent-hq-pg.sql.gz`. The dump covers **all** hub-owned data —
+identities and exchange records included — and is the restore source for the
+rebuildability criterion (overview criterion 8).
+
+Plan markdown lives in your repositories and is already in git there; it is not Agent HQ data.
+
 ## Releases and data are separate
 
 ```
@@ -68,15 +113,8 @@ The deploy refuses to start if the port is held by something other than the serv
 A deploy never touches the database or the logs — they live beside the releases, not inside
 them. Deleting old releases is safe; deleting `current` is not (the next deploy recreates it).
 
-### Backups
-
-Everything Agent HQ owns is the single SQLite file plus the logs. For a consistent copy:
-
-```bash
-sqlite3 ~/.local/share/agent-hq/agent-hq.sqlite ".backup '/path/to/backup.sqlite'"
-```
-
-Plan markdown lives in your repositories and is already in git there; it is not Agent HQ data.
+Backups: [above](#backups) — SQLite on the laptop, `pg_dump` in container mode. Plan markdown
+lives in your repositories and is already in git there; it is not Agent HQ data.
 
 ## Logs
 

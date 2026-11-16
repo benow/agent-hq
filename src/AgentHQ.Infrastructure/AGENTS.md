@@ -1,11 +1,42 @@
 # AgentHQ.Infrastructure — feature knowledge
 
-Agent HQ's own SQLite database (Dapper for queries, DbUp for migrations), the stores, the plan
+Agent HQ's own database (Dapper for queries, DbUp for migrations), the stores, the plan
 service, the event store, and the two file-system watchers.
 
 Behaviour is documented in [docs/features/events.md](../../docs/features/events.md) and
 [docs/features/plan-lifecycle.md](../../docs/features/plan-lifecycle.md). This file records the
 traps.
+
+## Two store layers (SQLite spoke / PostgreSQL hub), never shared SQL
+
+Since part 1 of [docs/plans/distributed-agent-hq](../../docs/plans/distributed-agent-hq/00-OVERVIEW.md):
+
+- **Row models live in `AgentHQ.Models`** (I/O-free, referenced by both layers; it references
+  Core, not the other way). Both providers bind the same POCOs — booleans stay INTEGER/BIGINT
+  on both sides so the `long` properties do not fork.
+- **The interfaces** (`IEventStore`, `IRepositoryStore`, `ISessionStore`, `IPlanStore`,
+  `IExchangeStore`) are what services consume; `AgentHqHost.BuildAsync` selects implementations
+  by `AGENTHQ_DB_PROVIDER` (default `sqlite`; `postgres` + `AGENTHQ_PG_CONNSTR`). Tests pass
+  `DbProvider`/`PgConnStr` through `AgentHqOptions` — never via process env, which would race
+  across parallel test classes.
+- **`IAgentHqConnectionFactory`** (`AgentHqDb` / `AgentHqPgDb`) is what `ExchangeService` gets;
+  it opens connections and runs that provider's DbUp migration set.
+- **Two migration sets**: `Migrations/*.sql` (SQLite, spoke) and `Migrations.Pg/*.sql` (hub,
+  journaled in `AgentHqPgSchemaVersions`). Never share one file between dialects; never edit
+  an applied one in either set. `AgentHqPgDb.Migrate` filters the assembly's embedded scripts
+  to the `.Migrations.Pg.` prefix — the SQLite scripts are embedded in the same assembly.
+- **Npgsql traps that differ from SQLite** (learned porting the stores):
+  - Dapper's automatic `IN @list` expansion emits positional syntax Npgsql rejects
+    (`42601`) — expand lists into named parameters explicitly in Pg stores.
+  - `COUNT(1)` is BIGINT in PostgreSQL: cast (`::int`) when the interface promises `int`;
+    use `EXISTS(...)` for booleans instead of `COUNT(1)`-as-bool.
+  - Two-argument scalar `MAX(a,b)` does not exist; use `GREATEST`.
+  - `RETURNING seq` replaces `last_insert_rowid()`; `BIGSERIAL` replaces `AUTOINCREMENT`.
+  - `INSERT OR IGNORE` becomes `ON CONFLICT DO NOTHING` (the `ON CONFLICT … DO UPDATE`
+    upserts were already native to both dialects).
+- **Postgres-bound tests** (`PostgresHubTests`) use Testcontainers: one PostgreSQL container
+  per class fixture, a fresh database per test, `SkippableFact` with a named skip when
+  `/var/run/docker.sock` is absent. The SQLite suite must always run without Docker.
 
 ## SQLite + Dapper
 

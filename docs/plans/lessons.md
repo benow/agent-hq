@@ -4,6 +4,14 @@ The repository's accumulated lessons. Consult when drafting verification criteri
 deciding how to avoid known mistakes. Append new lessons at the top; one lesson per entry, with
 the date and the evidence that taught it.
 
+- **2026-11-16 — The 128-inotify budget bites the suite once a second host-per-class fixture
+  lands.** With `PostgresHubTests` added (one in-memory host per test, real watchers), the full
+  suite intermittently fails 1–2 watcher-heavy tests (e.g. ExchangeTests) with `IOException:
+  inotify instances reached`; the same tests pass in isolation. The deployed hub holds many
+  instances already (scratch 16 + deployed 15 observed 2026-10-31). When a run shows that
+  IOException, re-run the failed class alone before debugging anything — it is contention, not
+  a regression. The durable fix (raising `fs.inotify.max_user_instances` on dev machines, or
+  trimming watcher lifetime in test hosts) is open.
 - **2026-10-24 — Never pipe `dotnet test` output; redirect to a file.** A CLR-aborted testhost can
   orphan the pipe and wedge the pipeline for minutes while doing no work (observed: 15 minutes at
   0.9 s CPU, zero test output). `timeout` kills only the leader process, not the orphan holding

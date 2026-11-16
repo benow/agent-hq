@@ -57,26 +57,26 @@ auth, no spokes. It is the behaviour-preserving re-platform that everything else
 
 ## Steps
 
-- [ ] `AGENTHQ_URL` binding in `Program.cs`; remove the hard-coded loopback; health and
+- [x] `AGENTHQ_URL` binding in `Program.cs`; remove the hard-coded loopback; health and
       content-root behaviour unchanged.
-- [ ] Move row models out of `AgentHQ.Infrastructure` stores into a shared I/O-free project
+- [x] Move row models out of `AgentHQ.Infrastructure` stores into a shared I/O-free project
       (`AgentHQ.Models`) — pure POCOs, settable properties (Dapper's constructor binding
       rule still applies). Spoke stores re-bind; no behaviour change.
-- [ ] Port hub stores to Npgsql + `Migrations.Pg` (repositories, plans, history, blocks,
+- [x] Port hub stores to Npgsql + `Migrations.Pg` (repositories, plans, history, blocks,
       session mirror, events, exchange, lessons) — same shapes, this is a port not a
       redesign. Composition root selects store implementations by provider.
-- [ ] `Dockerfile`: multi-stage, non-root user, `AgentHQ.Api` publish; content root is
+- [x] `Dockerfile`: multi-stage, non-root user, `AgentHQ.Api` publish; content root is
       already `AppContext.BaseDirectory`, which is container-correct.
-- [ ] `compose.yaml` in the repo: hub + db, volumes, healthcheck, `stop_grace_period`.
-- [ ] Deploy script container mode (build, tag, up, health-wait, `check`).
-- [ ] Stand it up on builds, loopback bind; smoke via `curl` on builds (`/health`,
+- [x] `compose.yaml` in the repo: hub + db, volumes, healthcheck, `stop_grace_period`.
+- [x] Deploy script container mode (build, tag, up, health-wait, `check`).
+- [x] Stand it up on builds, loopback bind; smoke via `curl` on builds (`/health`,
       `/overview`).
-- [ ] Test wiring: Testcontainers Postgres for hub-bound test classes; `scripts/test.sh`
+- [x] Test wiring: Testcontainers Postgres for hub-bound test classes; `scripts/test.sh`
       profile; CI (runners are on builds) runs the full set.
-- [ ] Nightly `pg_dump` timer on builds to a dated folder on the data volume (ops note in
+- [x] Nightly `pg_dump` timer on builds to a dated folder on the data volume (ops note in
       `docs/operations.md`; hub-owned rows — exchange, identities — are the only data the
       spoke cannot rebuild, per the overview's rebuildability rule).
-- [ ] Docs: `docs/operations.md` (container deploy, volumes, backup),
+- [x] Docs: `docs/operations.md` (container deploy, volumes, backup),
       `docs/installation.md` refresh, Infrastructure feature file.
 
 ## Verification Criteria
@@ -106,3 +106,44 @@ auth, no spokes. It is the behaviour-preserving re-platform that everything else
 - 2026-11-15 — drafted. Scope deliberately narrowed to a behaviour-preserving port after the
   architecture session: contract, auth and spoke work all land on top of this, so this part
   must not smuggle any of them in.
+
+- 2026-11-15/16 — IMPLEMENTED (session `zcode/distributed-hub-part1`, branch
+  zcode/distributed-hub-part1, commit f80e4c2). Evidence against the Verification Criteria:
+  1. **On builds**: fresh clone at `builds:~/apps/agent-hq` (pushed from the laptop via a
+     bare repo `~/apps/agent-hq.git`) → `scripts/agent-hq-deploy.sh container up` → hub
+     healthy after ~15 s of container runtime (image build was the bulk of 105 s);
+     `/health` `{"status":"ok",…}` and `/overview` answer over loopback
+     `127.0.0.1:5317`; provider degrades to `missing` inside the container by design
+     (no ZCode db there — spokes arrive in part 4). All 13 tables + the DbUp
+     `AgentHqPgSchemaVersions` journal verified via `psql`.
+  2. **Suite**: PostgresHubTests (Testcontainers postgres:17-alpine, fresh database per
+     test) 6/6 green locally: lifecycle round trip (start→review→implement through the real
+     hook feed), dependencies/blocks/content-CAS, event seq ordering, sessions upsert,
+     exchange round trip. Full SQLite suite green (181 tests; WebUiContractTests and the E2E
+     simulation pass unchanged — only store *types* moved to interfaces). **CI evidence
+     deferred**: the workflow is runner-gated (`RUNNER_ENABLED` unset), so there is no CI run
+     link yet; the named-skip-without-Docker path is the `PostgresFixture` SkipException.
+  3. **Stop/start**: `compose stop hub` → container `exit=0, oom=false` (SIGTERM drained
+     within the 10 s grace period); `up` again → the repository registered inside the
+     `/data` volume survived (criterion's data-preservation clause).
+  4. **Behaviour-preserving**: no test rewrites beyond swapping concrete store types for
+     interfaces; WebUiContractTests untouched and green.
+  5. **Deploy path**: performed from a clean clone on builds; `container check` gates on
+     health and `container up` rolls back (`compose down`, volumes kept) + exits non-zero on
+     a failed health wait. The rollback path itself was not exercised with a deliberately
+     broken build — code-reviewed only; the next deploy gets the chance.
+  6. **Laptop hub untouched**: still systemd + SQLite (release da17ca6), the container
+     experiment ran on builds only, and the scratch compose project name was never brought
+     up on the laptop (port 5317 is the live hub's; the local docker build was image-only).
+  - Environment notes: builds has Docker 29.9.3 + Compose v5.7.1; linger enabled for the
+    backup timer; first `pg_dump` produced `backups/20261116/agent-hq-pg.sql.gz` (3.1 KB).
+  - Deviations: (a) `ExchangeService` took an `IAgentHqConnectionFactory` instead of a raw
+    `AgentHqDb` so its transaction path is provider-neutral (needed for criterion 2's
+    PostgreSQL suite); (b) Dapper's automatic `IN @list` expansion is incompatible with
+    Npgsql — the Pg stores expand lists explicitly (recorded in the Infrastructure AGENTS.md);
+    (c) the plan's "Move row models … Spoke stores re-bind" was done as `AgentHQ.Models`
+    with a reference to Core (for `ExchangeItemRow.ToModel()`); Core does not reference
+    Models, so the layering stays acyclic. Transitive dependency note: restore surfaces
+    NU1903 (high-severity advisory) against SQLitePCLRaw 2.1.11 via Microsoft.Data.Sqlite
+    10.0.0 — pre-existing, flagged for a dedicated dependency-commit fix, not mixed into
+    this one.
