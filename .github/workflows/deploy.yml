@@ -63,4 +63,3 @@ jobs:
         run: bash scripts/agent-hq-deploy.sh container up
       - name: verify
         run: bash scripts/agent-hq-deploy.sh container check
-        run: bash scripts/agent-hq-deploy.sh check
