@@ -79,7 +79,10 @@ directly. Rollback (hub mode) restores everything, unchanged.
       refusal logic updated per the naming rules).
 - [ ] E2E: the simulation gains a spoke actor — in-memory hub (Postgres) + real spoke
       composition + synthetic ZCode db + hook-fed commands; the kill-mid-drain,
-      hub-wiped, and offline-drain scenarios from the matrix above.
+      hub-wiped, and offline-drain scenarios from the matrix above. Keep the fixture
+      discipline from `tests/AgentHQ.Tests/AGENTS.md` (one host per class, one repo per
+      test, time-boxed polls): the spoke actor adds real watchers and the inotify budget
+      here is 128 — do not add per-test hosts.
 - [ ] Docs: `docs/features/distributed.md` (spoke side), `docs/operations.md` (laptop
       unit, rollback drill), Infrastructure + Tests feature files.
 

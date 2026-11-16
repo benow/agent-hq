@@ -1,7 +1,9 @@
-namespace AgentHQ.Infrastructure.Stores;
+namespace AgentHQ.Models;
 
-// Row models mirror bridge table columns (snake_case columns are aliased to these names in
-// Columns.cs). They must be properties: Dapper does not materialize public fields.
+// Row models mirror hub/spoke table columns (snake_case columns are aliased to these property
+// names by each store's column list). They must be properties: Dapper does not materialize
+// public fields. This project is I/O-free — shared by the SQLite (spoke) and PostgreSQL (hub)
+// store layers, which never share SQL.
 
 public sealed class RepositoryRow
 {
@@ -125,7 +127,7 @@ public sealed class ExchangeItemRow
     public string? BlobContentType { get; set; }
     public string? BlobSha256 { get; set; }
 
-    public Core.Exchange.ExchangeItem ToModel() => new(
+    public AgentHQ.Core.Exchange.ExchangeItem ToModel() => new(
         Id, Kind, State, LatencyClass, ThreadId, (int)HopCount,
         new Core.Exchange.ExchangeActor(SenderActorType, SenderActorId),
         new Core.Exchange.ExchangeActor(RecipientActorType, RecipientActorId),

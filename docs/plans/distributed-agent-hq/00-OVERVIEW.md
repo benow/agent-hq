@@ -17,7 +17,7 @@ Agent HQ stops being a monolith on a transient laptop and becomes a hub-and-spok
   hook ingest on loopback, the ZCode provider, the file watchers, the plan engine, and a
   local SQLite working copy. Each spoke talks to the hub over a versioned HTTP API through a
   **shared NuGet client** (`AgentHQ.Client`) published to the private feed
-  (**registry.benow.ca**).
+  (**nuget.benow.ca** — see step 0's reconcile).
 - **Audience**: **Linda V2 (OpenClaw, internal network) is the primary user** — project
   management, verification, attention routing. **Linda V1 (Meta Muse, external)** gets the
   same MCP visibility through an explicit external access point. Andy uses the web UI and
@@ -110,18 +110,43 @@ topology; it is the rollback.
 
 **Gate rule:** a part is done when its own Verification Criteria pass, verified in a
 *different session* than the one that implemented it (the repository's separation-of-duties
-rule). Downstream work does not start before the upstream gate.
+rule; the lifecycle itself is in
+[docs/features/plan-lifecycle.md](../../features/plan-lifecycle.md)). Downstream work does
+not start before the upstream gate. Gate 3 additionally requires the step-0 feed-hostname
+reconcile to be resolved — part 3 publishes to the feed by name.
+
+## How to work on this plan (for the implementing session)
+
+- Read `docs/plans/lessons.md` first, and the feature `AGENTS.md` for every project you
+  touch. Read the part file you are implementing end to end before starting.
+- Tests run via `scripts/test.sh` (build once, filtered `--no-build` runs; never pipe test
+  output). A CLR-abort with no test output is the known harness flake — re-run; CI retries
+  once.
+- Status moves only through `/plan` commands via `PlanService`; never hand-edit a plan
+  status. Evidence goes in the part file's Status Log.
+- Every schema change is a new DbUp migration (SQLite) or `Migrations.Pg` script (hub,
+  part 1); never edit an applied one.
+- Ports: the hub owns **5317**; the laptop spoke keeps **5317** on loopback (the hook and
+  ZCode never re-target); the builds spoke takes **5318** (part 5).
+- Neither Linda can reach the laptop today — that is expected, not a blocker; the V1
+  reachability probe (part 2) is the feasibility gate for the external point.
 
 ## Steps
 
-- [ ] Merge `zcode/plan-workflow-support` (8636ad8 — the `/plan:*` colon pack nastv is
+- [x] Merge `zcode/plan-workflow-support` (8636ad8 — the `/plan:*` colon pack nastv is
       already cut over to) and deploy. Everything here builds on that command path.
-- [ ] Verify Docker on the laptop (hub tests need Postgres; see part 1). The builds runners
+      (Already an ancestor of main; deployed release da17ca6 contains it.)
+- [x] Verify Docker on the laptop (hub tests need Postgres; see part 1). The builds runners
       already have it (nastv builds-stack overview, 2026-11-15).
-- [ ] Reconcile the private feed hostname: Andy says **registry.benow.ca**; nastv's
+      (Docker 29.1.3 on Ubuntu 26.04, daemon reachable — 2026-11-15.)
+- [x] Reconcile the private feed hostname: Andy says **registry.benow.ca**; nastv's
       `AGENTS.infrastructure.md` last recorded `nuget.benow.ca` (BaGet, `nastv-nuget`).
       Confirm which is live, update the nastv record — that doc also still lacks the builds
       fleet row (part 6 fixes both together if not sooner).
+      (RESOLVED 2026-11-15 by probe: `nuget.benow.ca` serves the live NuGet v3 feed
+      (`/v3/index.json` → BaGetter); `registry.benow.ca` is the **Docker** container
+      registry (401 challenge on `/v2/`). The nastv record was already correct — no update
+      needed. The feed for `AgentHQ.Client` is **nuget.benow.ca**; part 3 corrected.)
 - [x] Multi-file plan accommodation (delivered 2026-11-15, with the workflow import):
       `PlanDirWatcher` watches `docs/plans/**/*.md` recursively; `POST /plans` with
       `filePath` adopts a drafted file without rewriting; a plan directory's aggregator row
@@ -145,8 +170,12 @@ rule). Downstream work does not start before the upstream gate.
    `|| true` hook guard was already the floor — now nothing queues behind a dead hub).
 7. Linda V2 answers a PM question from `get_overview` + `get_events` alone (her captured
    transcript is the evidence). Linda V1 does the same through the external MCP point.
-8. **Rebuildability**: wipe the hub's Postgres volume → the spoke's next registration
-   rebuilds the projections → the reads above are identical. The lens property, proven.
+8. **Rebuildability**: wipe the hub's Postgres volume, restore identities from the last
+   `pg_dump`, restart → the spoke's next registration rebuilds the spoke-replicated
+   projections (plans, history, sessions, CI records) → the reads above are identical.
+   The lens property, proven. **Scope note:** exchange blobs and identities are
+   hub-owned and NOT spoke-rebuildable — criterion 8 is only claimable for the
+   spoke-replicated reads, with identities restored from the nightly dump (part 1).
 9. **Rollback drill**: unset `AGENTHQ_HUB_URL` on the laptop, restart → the laptop serves
    as the hub again from its intact SQLite, nothing lost.
 10. **Build estate through the build spoke**: runner/stack health and integration runs are
@@ -202,3 +231,35 @@ their plan's Status Log when part 5 is approved.
   V1-external audience, multi-file gates. The single-file draft (untracked at
   `docs/plans/distributed-hub.md` in the main checkout) is superseded by this directory —
   delete it when this lands.
+- 2026-11-15 — REVIEWED (separate session, per the /plan:review gate). Findings, all
+  addressed in the same pass:
+  1. **Criterion 8 contradiction (fixed):** "wipe Postgres → reads identical" overclaimed —
+     exchange blobs and identities are hub-owned and not spoke-rebuildable (part 1 says so).
+     Criterion 8 now scopes to spoke-replicated projections with identities restored from
+     the nightly `pg_dump`.
+  2. **Wrong cross-reference (fixed in 01):** part 1 criterion 6 cited the "pre-cutover
+     smoke in part 6"; the cutover part is 07.
+  3. **Hidden gate (made explicit):** part 3 hardcodes registry.benow.ca but the hostname
+     reconcile is a step-0 checkbox — now a stated precondition of part 3's gate.
+  4. **Lesson not carried (fixed in 03):** the 2026-10-24 MCP lesson says the SDK forces
+     camelCase *regardless of authored casing* — "plain property names" understated it;
+     part 3 now says author and assert camelCase.
+  5. **Junior onboarding gap (fixed):** the overview had no pointer to `lessons.md`,
+     `scripts/test.sh` discipline, the CLR-abort retry rule, or the plan lifecycle — added
+     a "How to work on this plan" section, including the port map (laptop spoke keeps 5317,
+     builds spoke 5318, hub 5317 on builds) which was previously unspecified for the laptop
+     hook target.
+  6. **Inotify budget in part 4's E2E (noted in 04):** the spoke actor adds real watchers
+     to the test host; part 4 now names the one-host-per-class fixture discipline.
+  Verdict after fixes: **approved** — ready for `/plan implement` on part 1 (step-0 items
+  first). The feed-hostname reconcile is an external fact-check, tracked as step 0, not a
+  plan defect.
+- 2026-11-15 — STEP 0 COMPLETE (implementing session). (1) Merge: 8636ad8 already an
+  ancestor of main; deployed release da17ca6 contains the colon pack — no action. (2)
+  Docker on the laptop verified: 29.1.3 on Ubuntu 26.04, daemon reachable. (3) Feed
+  hostname reconciled by probe: `nuget.benow.ca` is the live NuGet v3 feed (BaGetter,
+  `/v3/index.json` returns the resource index); `registry.benow.ca` is the Docker
+  container registry (401 auth challenge on `/v2/`, Apache proxy — nastv
+  `AGENTS.deploy.md:24`). Andy's recollection conflated the two; nastv's
+  `AGENTS.infrastructure.md:136` record was already correct, so no update was needed
+  there. Part 3's feed references corrected to nuget.benow.ca in this pass.

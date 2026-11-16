@@ -5,7 +5,8 @@ Component of: [00-OVERVIEW.md](00-OVERVIEW.md) · Started: 2026-11-15
 ## Goal
 
 One versioned contract between hub and spokes, shipped as a maintained NuGet package —
-**`AgentHQ.Client`** on the private feed (registry.benow.ca, per step 0's reconcile). The
+**`AgentHQ.Client`** on the private feed (**nuget.benow.ca**, per step 0's reconcile —
+`registry.benow.ca` is the Docker registry, not the NuGet feed). The
 hub implements it; the spoke consumes it; any future spoke (a builds-local worker, a NAS
 worker, a third party) gets the same package and nothing else. Server code stays on the
 server. This part is the heart of the architecture: registration, bulk snapshot, delta
@@ -28,8 +29,11 @@ replication with actor passthrough, and the command queue.
 ## The contract
 
 All endpoints under the hub's API, authenticated per part 2 (`worker` role for spoke
-routes, `ci` for ingest). JSON policy as the host's: camelCase, nulls omitted. Plain
-property names (the MCP rule applies to anything the SDK might serialize).
+routes, `ci` for ingest). JSON policy as the host's: camelCase, nulls omitted. Author
+property names in camelCase and assert camelCase in tests — the SDK serializer applies the
+naming policy regardless of authored casing (lesson 2026-10-24; PascalCase assertions can
+never pass). **Precondition:** the step-0 feed-hostname reconcile must be resolved before
+this part's gate — the publish pipeline and criterion 1 name the feed explicitly.
 
 | Route | Direction | Purpose |
 |---|---|---|
@@ -81,7 +85,7 @@ Rules that are the contract:
   backoff + jitter; per-stream ordered sends) and `AgentHQ.Client.Conformance` (the test
   kit: a fixture any hub implementation runs to prove the contract — the hub's own test
   suite runs it, and a future third-party hub could too).
-- **Publishing**: pack + push to registry.benow.ca from CI on tag (`v*`); branch builds get
+- **Publishing**: pack + push to nuget.benow.ca from CI on tag (`v*`); branch builds get
   prerelease suffixes. `nuget.config` in-repo points at the feed; credentials via the
   existing CI secret convention. Dependency rule: the package references nothing from this
   solution except the shared models assembly — and even that is repackaged, not projected,
@@ -105,7 +109,7 @@ Rules that are the contract:
 
 ## Verification Criteria
 
-1. A throwaway console project restores `AgentHQ.Client` from registry.benow.ca and
+1. A throwaway console project restores `AgentHQ.Client` from nuget.benow.ca and
    completes register → heartbeat → snapshot → events → command round-trip against a hub
    (evidence: its transcript in the Status Log).
 2. The conformance kit passes against the real hub composition in CI.

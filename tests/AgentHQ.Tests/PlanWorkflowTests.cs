@@ -66,7 +66,7 @@ public class PlanWorkflowTests(AgentHQApp app) : IClassFixture<AgentHQApp>
             Assert.Null(await store.ResolveByCwdAsync(Path.Combine(worktreesRoot, "no-such-repo", "w")));
 
             // Without a configured worktrees root, the mapping is off entirely.
-            var plain = app.Get<RepositoryStore>();
+            var plain = app.Get<AgentHQ.Infrastructure.Stores.IRepositoryStore>();
             Assert.Null(await plain.ResolveByCwdAsync(worktree));
         }
         finally
@@ -119,7 +119,7 @@ public class PlanWorkflowTests(AgentHQApp app) : IClassFixture<AgentHQApp>
         var plansDir = app.PlansDir;
         var doneDir = Path.Combine(plansDir, "done");
         Directory.CreateDirectory(doneDir);
-        var before = await app.Get<PlanStore>().GetAsync(id);
+        var before = await app.Get<AgentHQ.Infrastructure.Stores.IPlanStore>().GetAsync(id);
         Assert.NotNull(before);
 
         // The done/abandon archive move: old path leaves the watched directory.
@@ -127,16 +127,16 @@ public class PlanWorkflowTests(AgentHQApp app) : IClassFixture<AgentHQApp>
 
         var repointed = await AgentHQApp.WaitForAsync(async () =>
         {
-            var row = await app.Get<PlanStore>().GetAsync(id);
+            var row = await app.Get<AgentHQ.Infrastructure.Stores.IPlanStore>().GetAsync(id);
             return row is not null && row.FilePath == Path.Combine(doneDir, "archive-move.md");
         });
         Assert.True(repointed, "plan was not re-pointed to its archived location");
 
         // The plan stays fully addressable at its archived location.
-        var repo = (await app.Get<RepositoryStore>().ListAsync()).Single(r => r.Id == repoId);
-        var byDonePath = await app.Get<PlanStore>().ResolveFileArgAsync(repo, "done/archive-move.md");
+        var repo = (await app.Get<AgentHQ.Infrastructure.Stores.IRepositoryStore>().ListAsync()).Single(r => r.Id == repoId);
+        var byDonePath = await app.Get<AgentHQ.Infrastructure.Stores.IPlanStore>().ResolveFileArgAsync(repo, "done/archive-move.md");
         Assert.Single(byDonePath);
-        var bySlug = await app.Get<PlanStore>().ResolveFileArgAsync(repo, "archive-move");
+        var bySlug = await app.Get<AgentHQ.Infrastructure.Stores.IPlanStore>().ResolveFileArgAsync(repo, "archive-move");
         Assert.Single(bySlug);
     }
 }

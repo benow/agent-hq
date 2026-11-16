@@ -92,7 +92,7 @@ auth, no spokes. It is the behaviour-preserving re-platform that everything else
 5. The deploy script performs the whole path from a clean clone, and its `check` gate
    refuses a deploy that rolled back (existing rule: a rolled-back deploy is not a deploy).
 6. The live laptop hub is untouched by this part (still serving, still SQLite) — verified by
-   the pre-cutover smoke in part 6 having a baseline to compare against.
+   the pre-cutover smoke in part 7 having a baseline to compare against.
 
 ## Documentation
 

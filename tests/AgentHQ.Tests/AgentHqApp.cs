@@ -42,6 +42,11 @@ public sealed class AgentHQApp : IAsyncLifetime
     /// read once, in BuildAsync). Reverted when the host is disposed.</summary>
     private readonly Dictionary<string, string?> _savedEnvironment = new();
 
+    /// <summary>When set, the host boots its stores on PostgreSQL instead of SQLite
+    /// (Testcontainers-backed tests). Never via process env — classes run in parallel.</summary>
+    public string? DbProvider { get; init; }
+    public string? PgConnStr { get; init; }
+
     public void SetEnvironment(string name, string? value)
     {
         if (!_savedEnvironment.ContainsKey(name)) _savedEnvironment[name] = Environment.GetEnvironmentVariable(name);
@@ -70,7 +75,8 @@ public sealed class AgentHQApp : IAsyncLifetime
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
         var app = await AgentHqHost.BuildAsync(builder, new AgentHqOptions(AgentHqDbPath, ZCode.DbPath,
-            StartWatchers: true, DataDir: Path.Combine(RootDir, "data"), WorktreesRoot: worktreesRoot), Log);
+            StartWatchers: true, DataDir: Path.Combine(RootDir, "data"), WorktreesRoot: worktreesRoot,
+            DbProvider: DbProvider, PgConnStr: PgConnStr), Log);
         await app.StartAsync();
         return app;
     }
@@ -113,10 +119,10 @@ public sealed class AgentHQApp : IAsyncLifetime
     public async Task<JsonElement> GetPlanAsync(string id) =>
         await Client.GetFromJsonAsync<JsonElement>($"/plans/{id}");
 
-    public async Task<long> LastSeqAsync() => await Get<EventStore>().LastSeqAsync();
+    public async Task<long> LastSeqAsync() => await Get<AgentHQ.Infrastructure.Events.IEventStore>().LastSeqAsync();
 
     public async Task<IReadOnlyList<AgentHqEvent>> EventsSinceAsync(long seq) =>
-        await Get<EventStore>().ReadSinceAsync(seq);
+        await Get<AgentHQ.Infrastructure.Events.IEventStore>().ReadSinceAsync(seq);
 
     public static async Task<bool> WaitForAsync(Func<Task<bool>> condition, int timeoutMs = 8000)
     {

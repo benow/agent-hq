@@ -165,7 +165,7 @@ public static class ExchangeEndpoints
         });
 
         // Watch: SSE when given nothing, JSON catch-up with ?sinceSeq= or ?cursor=.
-        app.MapGet("/exchange/watch", (Func<HttpContext, string?, long?, long?, ExchangeService, EventStore, SseHub, Task>)
+        app.MapGet("/exchange/watch", (Func<HttpContext, string?, long?, long?, ExchangeService, IEventStore, SseHub, Task>)
             HandleWatchAsync);
 
 
@@ -224,7 +224,7 @@ public static class ExchangeEndpoints
     }
 
     private static async Task HandleWatchAsync(HttpContext ctx, string? actor, long? sinceSeq, long? cursor,
-        ExchangeService svc, EventStore events, SseHub hub)
+        ExchangeService svc, IEventStore events, SseHub hub)
     {
         var reader = actor;
         long from = sinceSeq ?? 0;

@@ -141,7 +141,7 @@ public class WebUiContractTests(AgentHQApp app) : IClassFixture<AgentHQApp>
     public async Task UnknownEventTypeIsSerializedGenericallyForTheActivityPanel()
     {
         // V2 will add event types; the UI renders unknown ones from type + payload.
-        var evt = await app.Get<Infrastructure.Events.EventStore>()
+        var evt = await app.Get<Infrastructure.Events.IEventStore>()
             .AppendAsync("conversation.message", new { from = "openclaw", text = "hello" });
         var poll = await app.Client.GetFromJsonAsync<JsonElement>($"/events?sinceSeq={evt.Seq - 1}");
         var row = poll.GetProperty("events").EnumerateArray().Last();

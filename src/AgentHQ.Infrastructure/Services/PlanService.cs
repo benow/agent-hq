@@ -1,3 +1,4 @@
+using AgentHQ.Models;
 using System.Diagnostics;
 using AgentHQ.Core.Events;
 using AgentHQ.Core.Plans;
@@ -30,13 +31,13 @@ public sealed record CommandOutcome(TransitionOutcome? Outcome, string? ResolveE
 /// </summary>
 public sealed class PlanService
 {
-    private readonly PlanStore _plans;
-    private readonly RepositoryStore _repositories;
-    private readonly EventStore _events;
+    private readonly IPlanStore _plans;
+    private readonly IRepositoryStore _repositories;
+    private readonly IEventStore _events;
     private readonly Serilog.ILogger _log;
     private readonly Dictionary<string, PlanDirWatcher> _watchers = new();
 
-    public PlanService(PlanStore plans, RepositoryStore repositories, EventStore events,
+    public PlanService(IPlanStore plans, IRepositoryStore repositories, IEventStore events,
         Serilog.ILogger? logger = null)
     {
         _plans = plans;
@@ -453,10 +454,10 @@ public sealed class PlanService
         return new CommandOutcome(null, $"'{command.Argument}' resolves to no plan in {repo.Id}");
     }
 
-    private Func<string, Task<Stores.SessionRow?>> _sessionsOf = _ => Task.FromResult<Stores.SessionRow?>(null);
+    private Func<string, Task<AgentHQ.Models.SessionRow?>> _sessionsOf = _ => Task.FromResult<AgentHQ.Models.SessionRow?>(null);
 
     /// <summary>Wires session lookup for attribution-aware file resolution (set by the host).</summary>
-    public void UseSessions(Func<string, Task<Stores.SessionRow?>> lookup) => _sessionsOf = lookup;
+    public void UseSessions(Func<string, Task<AgentHQ.Models.SessionRow?>> lookup) => _sessionsOf = lookup;
 
     /// <summary>Applies a parsed /plan command to a resolved plan with session attribution.</summary>
     public async Task<TransitionOutcome> ApplyCommandAsync(PlanRow plan, PlanCommand command,

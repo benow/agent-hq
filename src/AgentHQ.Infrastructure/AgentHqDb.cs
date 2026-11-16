@@ -1,3 +1,4 @@
+using System.Data.Common;
 using System.Reflection;
 using DbUp;
 using DbUp.Sqlite;
@@ -6,7 +7,7 @@ using Microsoft.Data.Sqlite;
 namespace AgentHQ.Infrastructure;
 
 /// <summary>Owns the bridge's SQLite database: DbUp migrations + connection factory.</summary>
-public sealed class AgentHqDb
+public sealed class AgentHqDb : IAgentHqConnectionFactory
 {
     private readonly string _connectionString;
     private readonly Serilog.ILogger _logger;
@@ -30,6 +31,8 @@ public sealed class AgentHqDb
         return conn;
     }
 
+    Task<DbConnection> IAgentHqConnectionFactory.OpenAsync() => Task.FromResult<DbConnection>(Open());
+
     public void Migrate(string? startupLogPath = null)
     {
         var up = DeployChanges.To
@@ -50,7 +53,7 @@ public sealed class AgentHqDb
     }
 
     /// <summary>DbUp's log, appended one line per entry to a file (never to the journal).</summary>
-    private sealed class FileUpgradeLog(string path) : DbUp.Engine.Output.IUpgradeLog
+    internal sealed class FileUpgradeLog(string path) : DbUp.Engine.Output.IUpgradeLog
     {
         public void LogInformation(string format, params object[] args) => Write("INF", format, args);
         public void LogError(string format, params object[] args) => Write("ERR", format, args);

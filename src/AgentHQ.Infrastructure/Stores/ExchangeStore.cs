@@ -1,3 +1,4 @@
+using AgentHQ.Models;
 using Dapper;
 using System.Data.Common;
 
@@ -8,7 +9,7 @@ namespace AgentHQ.Infrastructure.Stores;
 /// parameters; state moves only through UPDATEs guarded by the state they move from, so two
 /// concurrent claimants cannot both win (the second updates nothing and is refused).
 /// </summary>
-public sealed class ExchangeStore
+public sealed class ExchangeStore : IExchangeStore
 {
     private readonly AgentHqDb _db;
 
@@ -59,9 +60,7 @@ public sealed class ExchangeStore
             new { T = sender.Type, I = sender.Id, K = key }, tx);
     }
 
-    public sealed record ExchangeActorKey(string Type, string Id);
-
-    /// <summary>Items in a thread, oldest first.</summary>
+    /// <summary>Obsolete nested alias — use <see cref="AgentHQ.Models.ExchangeActorKey"/>.</summary>    /// <summary>Items in a thread, oldest first.</summary>
     public async Task<IReadOnlyList<ExchangeItemRow>> ThreadAsync(string threadId)
     {
         await using var conn = _db.Open();

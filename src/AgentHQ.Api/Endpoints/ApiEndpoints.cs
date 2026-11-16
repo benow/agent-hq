@@ -13,7 +13,7 @@ namespace AgentHQ.Api.Endpoints;
 public static class ApiEndpoints
 {
     public static async Task<IResult> Overview(
-        RepositoryStore repos, PlanStore plans, SessionStore sessions, EventStore events)
+        IRepositoryStore repos, IPlanStore plans, ISessionStore sessions, IEventStore events)
     {
         var repositories = await repos.ListAsync();
         var byStatus = new Dictionary<string, object>();
@@ -51,13 +51,13 @@ public static class ApiEndpoints
 
     public static WebApplication MapRepositories(this WebApplication app)
     {
-        app.MapGet("/repositories", async (RepositoryStore store) =>
+        app.MapGet("/repositories", async (IRepositoryStore store) =>
             Results.Json((await store.ListAsync()).Select(r => new
             {
                 r.Id, r.RootPath, r.Provider, r.ExternalId, r.PlansDir, @default = r.IsDefaultBool, firstSeen = r.FirstSeen
             })));
 
-        app.MapPost("/repositories", async (RegisterRepoRequest req, RepositoryStore store, PlanService plans) =>
+        app.MapPost("/repositories", async (RegisterRepoRequest req, IRepositoryStore store, PlanService plans) =>
         {
             if (string.IsNullOrWhiteSpace(req.RootPath) || !Directory.Exists(Path.GetFullPath(req.RootPath)))
                 return Results.BadRequest(new { error = "rootPath must be an existing directory" });
@@ -72,7 +72,7 @@ public static class ApiEndpoints
     public static WebApplication MapSessions(this WebApplication app)
     {
         app.MapGet("/sessions", async (string? repo, string? status, DateTimeOffset? updatedSince,
-            string? repoRootPath, RepositoryStore repositories, SessionStore sessions, IAgentProvider provider) =>
+            string? repoRootPath, IRepositoryStore repositories, ISessionStore sessions, IAgentProvider provider) =>
         {
             // Read-through list: the provider is authoritative for filtering by freshness.
             var repoRef = repo ?? repoRootPath;
@@ -91,7 +91,7 @@ public static class ApiEndpoints
             }));
         });
 
-        app.MapGet("/sessions/{id}", async (string id, IAgentProvider provider, SessionStore sessions) =>
+        app.MapGet("/sessions/{id}", async (string id, IAgentProvider provider, ISessionStore sessions) =>
         {
             var detail = await provider.GetSessionAsync(id);
             var mirror = await sessions.GetAsync(id);
@@ -129,7 +129,7 @@ public static class ApiEndpoints
 
     public static WebApplication MapPlans(this WebApplication app)
     {
-        app.MapPost("/plans", async (SubmitPlanRequest req, RepositoryStore repos, PlanService plans) =>
+        app.MapPost("/plans", async (SubmitPlanRequest req, IRepositoryStore repos, PlanService plans) =>
         {
             if (string.IsNullOrWhiteSpace(req.Name))
                 return Results.BadRequest(new { error = "name is required" });
@@ -173,7 +173,7 @@ public static class ApiEndpoints
             }
         });
 
-        app.MapGet("/plans", async (string? repo, string? status, bool? ready, bool? blocked, PlanStore store) =>
+        app.MapGet("/plans", async (string? repo, string? status, bool? ready, bool? blocked, IPlanStore store) =>
         {
             var repoId = repo; // callers pass the repository id
             var rows = await store.ListAsync(repoId, status, ready, blocked);
@@ -187,7 +187,7 @@ public static class ApiEndpoints
             }));
         });
 
-        app.MapGet("/plans/{id}", async (string id, PlanStore store, PlanService svc) =>
+        app.MapGet("/plans/{id}", async (string id, IPlanStore store, PlanService svc) =>
         {
             var plan = await store.GetAsync(id);
             if (plan is null) return Results.NotFound(new { ok = false, error = "not_found", detail = $"no plan {id}" });
@@ -216,7 +216,7 @@ public static class ApiEndpoints
             });
         });
 
-        app.MapGet("/plans/{id}/content", async (string id, PlanStore store, PlanService svc) =>
+        app.MapGet("/plans/{id}/content", async (string id, IPlanStore store, PlanService svc) =>
         {
             var plan = await store.GetAsync(id);
             if (plan is null) return Results.NotFound(new { ok = false, error = "not_found", detail = $"no plan {id}" });
@@ -228,7 +228,7 @@ public static class ApiEndpoints
 
         // D11: re-point a registration at another file (admin: andy from the browser, openclaw
         // from MCP). The file must live under this repository's own plans directory.
-        app.MapPatch("/plans/{id}/file", async (string id, RepointRequest req, PlanStore store,
+        app.MapPatch("/plans/{id}/file", async (string id, RepointRequest req, IPlanStore store,
             PlanService svc) =>
         {
             var plan = await store.GetAsync(id);
@@ -240,7 +240,7 @@ public static class ApiEndpoints
         });
 
         // D11: delete the registration, never the file. 404 when unknown.
-        app.MapDelete("/plans/{id}", async (string id, string? by, PlanStore store, PlanService svc) =>
+        app.MapDelete("/plans/{id}", async (string id, string? by, IPlanStore store, PlanService svc) =>
         {
             var plan = await store.GetAsync(id);
             if (plan is null) return Results.NotFound(new { ok = false, error = "not_found", detail = $"no plan {id}" });
@@ -252,7 +252,7 @@ public static class ApiEndpoints
             });
         });
 
-        app.MapPut("/plans/{id}/content", async (string id, UpdateContentRequest req, PlanStore store, PlanService svc) =>
+        app.MapPut("/plans/{id}/content", async (string id, UpdateContentRequest req, IPlanStore store, PlanService svc) =>
         {
             var plan = await store.GetAsync(id);
             if (plan is null) return Results.NotFound(new { ok = false, error = "not_found", detail = $"no plan {id}" });
@@ -261,7 +261,7 @@ public static class ApiEndpoints
         });
 
 
-        app.MapPatch("/plans/{id}", async (string id, PatchPlanRequest req, PlanStore store, PlanService svc, EventStore events) =>
+        app.MapPatch("/plans/{id}", async (string id, PatchPlanRequest req, IPlanStore store, PlanService svc, IEventStore events) =>
         {
             var plan = await store.GetAsync(id);
             if (plan is null) return Results.NotFound();
@@ -274,7 +274,7 @@ public static class ApiEndpoints
             return Results.Ok(new { ok = true });
         });
 
-        app.MapPatch("/plans/{id}/status", async (string id, PatchStatusRequest req, PlanStore store, PlanService svc) =>
+        app.MapPatch("/plans/{id}/status", async (string id, PatchStatusRequest req, IPlanStore store, PlanService svc) =>
         {
             var plan = await store.GetAsync(id);
             if (plan is null) return Results.NotFound();
@@ -301,8 +301,8 @@ public static class ApiEndpoints
 
         // The web UI records human actions as /plan commands with attribution (same path as the
         // hook feed), so history shows one vocabulary regardless of where the action came from.
-        app.MapPost("/plans/{id}/commands", async (string id, PlanCommandRequest req, PlanStore store,
-            RepositoryStore repos, PlanService svc) =>
+        app.MapPost("/plans/{id}/commands", async (string id, PlanCommandRequest req, IPlanStore store,
+            IRepositoryStore repos, PlanService svc) =>
         {
             var plan = await store.GetAsync(id);
             if (plan is null) return Results.NotFound();
@@ -323,7 +323,7 @@ public static class ApiEndpoints
                 : Results.UnprocessableEntity(new { ok = false, error = outcome.Error, warnings = outcome.Warnings });
         });
 
-        app.MapPost("/plans/{id}/dependencies", async (string id, DependencyRequest req, PlanStore store) =>
+        app.MapPost("/plans/{id}/dependencies", async (string id, DependencyRequest req, IPlanStore store) =>
         {
             var plan = await store.GetAsync(id);
             if (plan is null) return Results.NotFound();
@@ -335,7 +335,7 @@ public static class ApiEndpoints
                 : Results.UnprocessableEntity(new { ok = false, error = "dependency rejected: self-reference or cycle" });
         });
 
-        app.MapGet("/repositories/{id}/lessons", async (string id, PlanStore store) =>
+        app.MapGet("/repositories/{id}/lessons", async (string id, IPlanStore store) =>
             Results.Json((await store.LessonsAsync(id)).Select(l => new
             {
                 l.EntryId, l.Title, l.Category, l.SourcePlanId, l.ContentHash,

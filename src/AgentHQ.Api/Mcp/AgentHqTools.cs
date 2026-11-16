@@ -16,7 +16,7 @@ namespace AgentHQ.Api.Mcp;
 public static class AgentHqTools
 {
     [McpServerTool, Description("One-call operational picture: repositories, plans grouped by status (blocked with reasons), verification queue, recently active sessions, last event seq. Orient with this first; then use get_events with sinceSeq to stay current — never re-list.")]
-    public static async Task<object> GetOverview(RepositoryStore repos, PlanStore plans, SessionStore sessions, EventStore events) =>
+    public static async Task<object> GetOverview(IRepositoryStore repos, IPlanStore plans, ISessionStore sessions, IEventStore events) =>
         new
         {
             repositories = (await repos.ListAsync()).Select(r => new { r.Id, r.RootPath, r.IsDefaultBool }),
@@ -27,7 +27,7 @@ public static class AgentHqTools
         };
 
     [McpServerTool, Description("List registered repositories (id, root path, default flag).")]
-    public static async Task<object> ListRepositories(RepositoryStore repos) =>
+    public static async Task<object> ListRepositories(IRepositoryStore repos) =>
         (await repos.ListAsync()).Select(r => new { r.Id, r.RootPath, r.Provider, @default = r.IsDefaultBool });
 
     [McpServerTool, Description("List development agent sessions. Pass updatedSince to cheaply catch up instead of re-listing.")]
@@ -56,7 +56,7 @@ public static class AgentHqTools
 
     [McpServerTool, Description("Submit a plan (markdown shape: the hub writes docs/plans/<slug>.md). Convention sections: Goal, Context, Steps (markdown checkboxes = progress), Dependencies, Verification Criteria, Documentation, Status Log. Draft against list_lessons so past oversight classes are designed out. Returns slug + soft-validation warnings. To register a plan file that already exists on disk (a drafted single file or a multi-file plan's overview), use the hub UI or POST /plans with filePath — the hub adopts it without writing; the MCP tool does not take filePath to keep this call's contract stable.")]
     public static async Task<object> SubmitPlan(string repo, string name, string markdown,
-        RepositoryStore repos, PlanService plans)
+        IRepositoryStore repos, PlanService plans)
     {
         var repoRow = await repos.GetAsync(repo);
         if (repoRow is null) return new { error = $"unknown repository '{repo}'" };
@@ -66,11 +66,11 @@ public static class AgentHqTools
     }
 
     [McpServerTool, Description("List plans. Filters: repo, status; ready=true = in_review, not blocked, dependencies all verified/done (herd on this); blocked=true = needs-attention queue.")]
-    public static async Task<object> ListPlans(string? repo, string? status, bool? ready, bool? blocked, PlanStore store) =>
+    public static async Task<object> ListPlans(string? repo, string? status, bool? ready, bool? blocked, IPlanStore store) =>
         await store.ListAsync(repo, status, ready, blocked);
 
     [McpServerTool, Description("Read a plan: metadata, transition history (actors, commands, git heads), dependencies.")]
-    public static async Task<object> ReadPlan(string planId, PlanStore store, PlanService svc)
+    public static async Task<object> ReadPlan(string planId, IPlanStore store, PlanService svc)
     {
         var plan = await store.GetAsync(planId);
         if (plan is null) return new { error = "not found" };
@@ -88,7 +88,7 @@ public static class AgentHqTools
 
     [McpServerTool, Description("Manual/fallback status transition; same lifecycle rules as /plan commands. Resolves the calling session by newest-active-in-repository when sessionId is omitted. Recorded with actor 'openclaw'.")]
     public static async Task<object> UpdatePlanStatus(string planId, string status, string sessionId,
-        string by, string note, PlanStore store, PlanService svc, SessionStore sessions)
+        string by, string note, IPlanStore store, PlanService svc, ISessionStore sessions)
     {
         var actorSession = string.IsNullOrWhiteSpace(sessionId) ? null : sessionId;
         by = string.IsNullOrWhiteSpace(by) ? "openclaw" : by;
@@ -112,7 +112,7 @@ public static class AgentHqTools
 
     [McpServerTool, Description("Update plan metadata: priority (integer, higher = sooner) and/or manually link the implementing session of record (fallback for missed hooks).")]
     public static async Task<object> UpdatePlan(string planId, long priority, string sessionId,
-        PlanStore store)
+        IPlanStore store)
     {
         var plan = await store.GetAsync(planId);
         if (plan is null) return new { error = "not found" };
@@ -123,11 +123,11 @@ public static class AgentHqTools
     }
 
     [McpServerTool, Description("List parsed lesson entries (docs/plans/lessons.md) for a repository — consult when drafting Verification Criteria.")]
-    public static async Task<object> ListLessons(string repositoryId, PlanStore store) =>
+    public static async Task<object> ListLessons(string repositoryId, IPlanStore store) =>
         await store.LessonsAsync(repositoryId);
 
     [McpServerTool, Description("Catch-up poll: events since seq N, optional types filter. The rhythm: get_overview first, then this each turn. Returns lastSeq for the next call.")]
-    public static async Task<object> GetEvents(long sinceSeq, string types, EventStore events)
+    public static async Task<object> GetEvents(long sinceSeq, string types, IEventStore events)
     {
         var filter = types?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
         List<Core.Events.AgentHqEvent> rows;

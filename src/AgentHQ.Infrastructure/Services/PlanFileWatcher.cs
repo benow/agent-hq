@@ -1,3 +1,4 @@
+using AgentHQ.Models;
 using System.Security.Cryptography;
 using System.Text;
 using AgentHQ.Core.Plans;
@@ -14,7 +15,7 @@ namespace AgentHQ.Infrastructure.Services;
 public sealed class PlanDirWatcher : IDisposable
 {
     private readonly RepositoryRow _repo;
-    private readonly PlanStore _plans;
+    private readonly IPlanStore _plans;
     private readonly Func<PlanRow, Task> _onExternalChange;
     private readonly Func<string, string, Task>? _onMoved;
     private readonly Serilog.ILogger _log;
@@ -22,7 +23,7 @@ public sealed class PlanDirWatcher : IDisposable
     private FileSystemWatcher? _fsw;
     private DateTime _settleUntilUtc = DateTime.MinValue;
 
-    public PlanDirWatcher(RepositoryRow repo, PlanStore plans,
+    public PlanDirWatcher(RepositoryRow repo, IPlanStore plans,
         Func<PlanRow, Task> onExternalChange, TimeSpan? debounce = null, Serilog.ILogger? logger = null,
         Func<string, string, Task>? onMoved = null)
     {

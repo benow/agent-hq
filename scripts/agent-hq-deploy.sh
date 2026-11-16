@@ -383,16 +383,77 @@ cmd_check() {
 
 main() {
   case "${1:-deploy}" in
-    deploy)  install_unit; deploy ;;
-    install) cmd_install ;;
-    check)   cmd_check ;;
-    status)  cmd_status ;;
-    start)   cmd_start ;;
-    stop)    cmd_stop ;;
-    restart) cmd_restart ;;
-    logs)    journalctl --user -u "$SERVICE" -f ;;
-    *)       die "unknown command '$1' (deploy|install|check|status|start|stop|restart|logs)" ;;
+    deploy)    install_unit; deploy ;;
+    install)   cmd_install ;;
+    check)     cmd_check ;;
+    status)    cmd_status ;;
+    start)     cmd_start ;;
+    stop)      cmd_stop ;;
+    restart)   cmd_restart ;;
+    logs)      journalctl --user -u "$SERVICE" -f ;;
+    container) shift || true; cmd_container "$@" ;;
+
+    *)       die "unknown command '$1' (deploy|install|check|status|start|stop|restart|logs|container)" 
   esac
+}
+
+# ---- container mode (hub on builds: agent-hq hub + PostgreSQL sidecar) ----
+# Same one deploy path, extended not replaced: builds the image (tag = git sha), brings the
+# compose stack up, waits on the host-loopback health endpoint, and runs the same check gate
+# (a rolled-back container is not a deploy). Requires AGENTHQ_PG_PASSWORD (db credential).
+COMPOSE="docker compose -f $ROOT/compose.yaml"
+CONTAINER_PORT="${AGENTHQ_PORT:-5317}"
+
+container_healthy() { curl -sf --max-time 2 "http://127.0.0.1:${CONTAINER_PORT}/health" >/dev/null 2>&1; }
+container_wait_healthy() {
+  local started=$SECONDS
+  while [ $((SECONDS - started)) -lt "$HEALTH_DEADLINE" ]; do
+    container_healthy && return 0
+    sleep 0.5
+  done
+  return 1
+}
+
+cmd_container() {
+  command -v docker >/dev/null 2>&1 || die "docker is not available — container mode needs it"
+  [ -f "$ROOT/compose.yaml" ] || die "compose.yaml missing in $ROOT"
+  : "${AGENTHQ_PG_PASSWORD:?set AGENTHQ_PG_PASSWORD (the PostgreSQL credential) before deploying container mode}"
+  export AGENTHQ_IMAGE_TAG="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo local)"
+
+  case "${2:-up}" in
+    up)
+      local started=$SECONDS
+      log "building image agent-hq:$AGENTHQ_IMAGE_TAG"
+      $COMPOSE build
+      log "starting hub + db"
+      $COMPOSE up -d
+      if container_wait_healthy; then
+        log "healthy after $((SECONDS - started))s: $(curl -s --max-time 2 http://127.0.0.1:${CONTAINER_PORT}/health)"
+        cmd_container_check
+      else
+        log "container hub did not become healthy within ${HEALTH_DEADLINE}s — rolling back"
+        $COMPOSE down
+        die "container deploy failed; previous state restored by compose down (volumes untouched)"
+      fi
+      ;;
+    check)
+      cmd_container_check
+      ;;
+    logs)
+      $COMPOSE logs -f --tail=50
+      ;;
+    down)
+      $COMPOSE down
+      log "stopped (volumes kept; 'down -v' would erase the database — never a deploy action)"
+      ;;
+    *) die "unknown container action '$2' (up|check|logs|down)" ;;
+  esac
+}
+
+cmd_container_check() {
+  container_healthy || { echo "unhealthy: $(curl -s --max-time 2 http://127.0.0.1:${CONTAINER_PORT}/health || echo '(no response)')"; $COMPOSE ps; return 1; }
+  echo "healthy: $(curl -s --max-time 2 http://127.0.0.1:${CONTAINER_PORT}/health)"
+  $COMPOSE ps
 }
 
 main "$@"

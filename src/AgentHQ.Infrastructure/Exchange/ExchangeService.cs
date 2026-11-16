@@ -1,3 +1,6 @@
+using System.Data.Common;
+using AgentHQ.Infrastructure;
+using AgentHQ.Models;
 using Dapper;
 using System.Text.Json;
 using AgentHQ.Core.Events;
@@ -52,16 +55,16 @@ public sealed record OpenQuestionView(ExchangeItem Item, int HopCount, string? C
 /// </summary>
 public sealed class ExchangeService
 {
-    private readonly AgentHqDb _db;
-    private readonly ExchangeStore _store;
-    private readonly RepositoryStore _repositories;
-    private readonly EventStore _events;
+    private readonly IAgentHqConnectionFactory _db;
+    private readonly IExchangeStore _store;
+    private readonly IRepositoryStore _repositories;
+    private readonly IEventStore _events;
     private readonly BlobStore _blobs;
     private readonly ExchangeOptions _options;
     private readonly Serilog.ILogger _log;
     private readonly TimeProvider _time;
 
-    public ExchangeService(AgentHqDb db, ExchangeStore store, RepositoryStore repositories, EventStore events,
+    public ExchangeService(IAgentHqConnectionFactory db, IExchangeStore store, IRepositoryStore repositories, IEventStore events,
         BlobStore blobs, ExchangeOptions options, TimeProvider? time = null, Serilog.ILogger? logger = null)
     {
         _db = db;
@@ -88,10 +91,10 @@ public sealed class ExchangeService
     /// and on success the event (if any) is appended in the same transaction before commit. Only
     /// after the commit are live subscribers told, so a rolled-back event never reaches SSE.
     /// </summary>
-    private async Task<TxOutcome> InTransactionAsync(Func<SqliteConnection, SqliteTransaction, Task<TxOutcome>> work)
+    private async Task<TxOutcome> InTransactionAsync(Func<DbConnection, DbTransaction, Task<TxOutcome>> work)
     {
-        await using var conn = _db.Open();
-        await using var tx = (SqliteTransaction)await conn.BeginTransactionAsync();
+        await using var conn = await _db.OpenAsync();
+        await using var tx = await conn.BeginTransactionAsync();
         var outcome = await work(conn, tx);
         if (outcome.Error is null && outcome.EventType is not null)
         {
@@ -209,7 +212,7 @@ public sealed class ExchangeService
                 "(the registered repository id) or contextRefs {\"repo\":\"<repository id>\"}");
 
         var now = Now;
-        var senderKey = new ExchangeStore.ExchangeActorKey(req.Sender.ActorType, req.Sender.ActorId);
+        var senderKey = new ExchangeActorKey(req.Sender.ActorType, req.Sender.ActorId);
         var windowStart = now.AddMinutes(-1).ToUnixTimeMilliseconds();
         var nowMs = now.ToUnixTimeMilliseconds();
 
@@ -305,7 +308,7 @@ public sealed class ExchangeService
 
         var now = Now;
         var nowMs = now.ToUnixTimeMilliseconds();
-        var senderKey = new ExchangeStore.ExchangeActorKey(sender.ActorType, sender.ActorId);
+        var senderKey = new ExchangeActorKey(sender.ActorType, sender.ActorId);
         var windowStart = now.AddMinutes(-1).ToUnixTimeMilliseconds();
 
         ExchangeItem? newAnswer = null;
@@ -567,7 +570,7 @@ public sealed class ExchangeService
         if (!ExchangeActor.TryParse(senderText, out var sender, out _))
             return Array.Empty<ExchangeItem>();
         var killed = new List<ExchangeItem>();
-        await using var conn = _db.Open();
+        await using var conn = await _db.OpenAsync();
         var roots = (await conn.QueryAsync<ExchangeItemRow>(
             @"SELECT id AS Id FROM exchange_items WHERE sender_actor_type = @T AND sender_actor_id = @I AND thread_id = id",
             new { T = sender.ActorType, I = sender.ActorId })).ToList();
@@ -611,7 +614,7 @@ public sealed class ExchangeService
     // ---- cursors and watch ----
 
     public async Task<ExchangeCursorRow?> GetCursorAsync(ExchangeActor actor) =>
-        await _store.GetCursorAsync(new ExchangeStore.ExchangeActorKey(actor.ActorType, actor.ActorId));
+        await _store.GetCursorAsync(new ExchangeActorKey(actor.ActorType, actor.ActorId));
 
     /// <summary>
     /// Advances a consumer's cursor. Moving it backwards is a request to replay, so it clears the
@@ -619,7 +622,7 @@ public sealed class ExchangeService
     /// </summary>
     public async Task<(long Set, bool Cleared)> SetCursorAsync(ExchangeActor actor, long lastSeq)
     {
-        var key = new ExchangeStore.ExchangeActorKey(actor.ActorType, actor.ActorId);
+        var key = new ExchangeActorKey(actor.ActorType, actor.ActorId);
         var current = await _store.GetCursorAsync(key);
         if (lastSeq < 0) return (current?.LastSeq ?? 0, false);
         if (lastSeq == 0)
@@ -687,7 +690,7 @@ public sealed class ExchangeService
             ? null
             : states.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         var kind = string.IsNullOrWhiteSpace(kinds) ? null : kinds.Trim();
-        var rows = await _store.InboxAsync(new ExchangeStore.ExchangeActorKey(actor.ActorType, actor.ActorId),
+        var rows = await _store.InboxAsync(new ExchangeActorKey(actor.ActorType, actor.ActorId),
             repos, stateList, kind, limit);
         return rows.Select(r => r.ToModel()).ToList();
     }
@@ -726,7 +729,7 @@ public sealed class ExchangeService
     public async Task HeartbeatAsync(ExchangeActor actor, string latencyClass, CancellationToken ct = default)
     {
         if (!ExchangeLatency.IsKnown(latencyClass)) latencyClass = ExchangeLatency.Minutes;
-        await _store.UpsertPresenceAsync(new ExchangeStore.ExchangeActorKey(actor.ActorType, actor.ActorId),
+        await _store.UpsertPresenceAsync(new ExchangeActorKey(actor.ActorType, actor.ActorId),
             latencyClass, Now.ToUnixTimeMilliseconds());
     }
 
@@ -777,7 +780,7 @@ public sealed class ExchangeService
         return (await _repositories.ListAsync()).Select(r => r.Id).ToList();
     }
 
-    private async Task<List<ExchangeItemRow>> ThreadRowsAsync(SqliteTransaction tx, string threadId)
+    private async Task<List<ExchangeItemRow>> ThreadRowsAsync(DbTransaction tx, string threadId)
     {
         var rows = await tx.Connection!.QueryAsync<ExchangeItemRow>(
             "SELECT " + Columns.ExchangeItem + " FROM exchange_items WHERE thread_id = @T ORDER BY created_at, id",

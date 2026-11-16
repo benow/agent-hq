@@ -1,9 +1,10 @@
+using AgentHQ.Models;
 using Dapper;
 using AgentHQ.Core.Plans;
 
 namespace AgentHQ.Infrastructure.Stores;
 
-public sealed class PlanStore
+public sealed class PlanStore : IPlanStore
 {
     private readonly AgentHqDb _db;
 

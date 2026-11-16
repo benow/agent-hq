@@ -438,13 +438,13 @@ public class ExchangeTests(AgentHQApp app) : IClassFixture<AgentHQApp>
         // The window is configurable; 1 s is the shortest the option allows and simulates a
         // consumer whose cursor predates everything still retained.
         var options = _app.Get<ExchangeService>().Options with { EventReplayWindowSeconds = 1 };
-        var service = new ExchangeService(_app.Get<AgentHqDb>(), _app.Get<ExchangeStore>(),
-            _app.Get<RepositoryStore>(), _app.Get<EventStore>(), _app.Get<BlobStore>(), options, logger: AgentHQApp.Log);
+        var service = new ExchangeService(_app.Get<AgentHQ.Infrastructure.IAgentHqConnectionFactory>(), _app.Get<AgentHQ.Infrastructure.Stores.IExchangeStore>(),
+            new AgentHQ.Infrastructure.Stores.RepositoryStore(_app.Get<AgentHqDb>()), _app.Get<AgentHQ.Infrastructure.Events.IEventStore>(), _app.Get<BlobStore>(), options, logger: AgentHQApp.Log);
         await CreateAsync("status", Linda, Andy, body: "fresh");
         var (resync, fromSeq) = await service.PrepareCatchUpAsync(1);
         Assert.True(resync);
         Assert.True(fromSeq > 1);
-        var announced = await _app.Get<EventStore>().ReadSinceAsync(fromSeq - 1, new[] { "exchange.resync" });
+        var announced = await _app.Get<AgentHQ.Infrastructure.Events.IEventStore>().ReadSinceAsync(fromSeq - 1, new[] { "exchange.resync" });
         Assert.Single(announced);
         Assert.True(announced[0].Payload.TryGetProperty("requestedFromSeq", out _));
     }

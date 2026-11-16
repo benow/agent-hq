@@ -14,12 +14,12 @@ public static class SseEndpoints
     /// </summary>
     public static WebApplication MapEvents(this WebApplication app)
     {
-        app.MapGet("/events", (Func<HttpContext, EventStore, SseHub, string?, long?, long?, Task>)
+        app.MapGet("/events", (Func<HttpContext, IEventStore, SseHub, string?, long?, long?, Task>)
             HandleEventsAsync);
         return app;
     }
 
-    private static async Task HandleEventsAsync(HttpContext ctx, EventStore events, SseHub hub,
+    private static async Task HandleEventsAsync(HttpContext ctx, IEventStore events, SseHub hub,
         string? types, long? sinceSeq, long? lastEventId)
     {
         var filter = types?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)

@@ -20,12 +20,12 @@ public sealed record HookPromptRequest(
 /// </summary>
 public sealed class HookFeedService(
     IAgentProvider provider,
-    RepositoryStore repositories,
-    SessionStore sessions,
+    IRepositoryStore repositories,
+    ISessionStore sessions,
     SessionSyncService sync,
-    PlanStore plans,
+    IPlanStore plans,
     PlanService planService,
-    EventStore events,
+    IEventStore events,
     Serilog.ILogger logger)
 {
     private readonly Serilog.ILogger _log = logger.ForContext("Subsystem", "hooks");

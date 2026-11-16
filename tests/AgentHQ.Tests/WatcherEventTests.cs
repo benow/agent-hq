@@ -67,7 +67,7 @@ public class WatcherAndEventIntegrationTests(AgentHQApp app) : IClassFixture<Age
             Run `dotnet test`.
             """);
         var svc = app.Get<PlanService>();
-        var repo = await app.Get<AgentHQ.Infrastructure.Stores.RepositoryStore>().GetAsync(repoId);
+        var repo = await app.Get<AgentHQ.Infrastructure.Stores.IRepositoryStore>().GetAsync(repoId);
         await svc.IndexLessonsAsync(repo!);
         var lessons = await app.Client.GetFromJsonAsync<JsonElement>($"/repositories/{repoId}/lessons");
         Assert.Single(lessons.EnumerateArray());
@@ -147,7 +147,7 @@ public class WatcherAndEventIntegrationTests(AgentHQApp app) : IClassFixture<Age
     {
         // Regression: the replay window was capped at 500 rows, so a client replaying from an
         // old cursor resumed hundreds of events behind live and never caught up.
-        var store = app.Get<AgentHQ.Infrastructure.Events.EventStore>();
+        var store = app.Get<AgentHQ.Infrastructure.Events.IEventStore>();
         var start = await store.LastSeqAsync();
         for (var i = 0; i < 600; i++)
             await store.AppendAsync("test.replay", new { i });

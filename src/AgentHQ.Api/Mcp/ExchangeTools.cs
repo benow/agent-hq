@@ -162,7 +162,7 @@ public static class ExchangeTools
         "Catch-up poll for push consumers: agent-hq Exchange events (exchange.created/claimed/answered/acknowledged/expired/killed/resync/presence) after sinceSeq. " +
         "With actor, the server cursor advances to the last seq returned; a cursor older than the replay window answers resync=true and the catch-up from the floor, never a silent gap. " +
         "For a live stream use GET /exchange/watch (SSE). Errors: unknown_actor.")]
-    public static async Task<object> ExchangeWatch(long sinceSeq, string actor, EventStore events,
+    public static async Task<object> ExchangeWatch(long sinceSeq, string actor, IEventStore events,
         ExchangeService svc)
     {
         ExchangeActor? reader = null;

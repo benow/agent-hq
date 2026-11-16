@@ -1,0 +1,50 @@
+# agent-hq hub on builds: API/UI container + PostgreSQL sidecar (part 1 of
+# docs/plans/distributed-agent-hq). Deployed only via scripts/agent-hq-deploy.sh container.
+# Everything the service creates lives in the named volumes — the "everything under
+# $AGENTHQ_DATA" rule carried over to named volumes.
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: agent_hq
+      POSTGRES_USER: agent_hq
+      POSTGRES_PASSWORD: ${AGENTHQ_PG_PASSWORD:?set AGENTHQ_PG_PASSWORD in the environment file}
+    volumes:
+      - agent-hq-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agent_hq -d agent_hq"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    stop_grace_period: 10s
+
+  hub:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: agent-hq:${AGENTHQ_IMAGE_TAG:-local}
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      AGENTHQ_DB_PROVIDER: postgres
+      AGENTHQ_PG_CONNSTR: Host=db;Database=agent_hq;Username=agent_hq;Password=${AGENTHQ_PG_PASSWORD}
+      # Loopback-only on the host until part 2 lands auth; the ZCode provider is not
+      # configured in the container — the hub degrades to "no sessions" by design.
+      AGENTHQ_ZCODE_DB: /nonexistent/db.sqlite
+    ports:
+      - "127.0.0.1:5317:5317"
+    volumes:
+      - agent-hq-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:5317/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 30s
+    stop_grace_period: 10s
+    restart: unless-stopped
+
+volumes:
+  agent-hq-pgdata:
+  agent-hq-data:

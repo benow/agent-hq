@@ -8,7 +8,7 @@ namespace AgentHQ.Infrastructure.Events;
 /// The events table is the durable SSE log: append returns the seq; SSE replay reads rows
 /// above Last-Event-ID; the poll form (sinceSeq) reads the same rows as JSON.
 /// </summary>
-public sealed class EventStore
+public sealed class EventStore : IEventStore
 {
     private readonly AgentHqDb _db;
     private readonly Serilog.ILogger _log;

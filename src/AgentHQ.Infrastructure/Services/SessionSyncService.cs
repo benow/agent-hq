@@ -1,3 +1,4 @@
+using AgentHQ.Models;
 using AgentHQ.Core.Domain;
 using AgentHQ.Core.Events;
 using AgentHQ.Infrastructure.Events;
@@ -13,14 +14,14 @@ namespace AgentHQ.Infrastructure.Services;
 public sealed class SessionSyncService
 {
     private readonly IAgentProvider _provider;
-    private readonly SessionStore _sessions;
-    private readonly RepositoryStore _repositories;
-    private readonly EventStore _events;
+    private readonly ISessionStore _sessions;
+    private readonly IRepositoryStore _repositories;
+    private readonly IEventStore _events;
     private readonly Serilog.ILogger _log;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
-    public SessionSyncService(IAgentProvider provider, SessionStore sessions,
-        RepositoryStore repositories, EventStore events, Serilog.ILogger? logger = null)
+    public SessionSyncService(IAgentProvider provider, ISessionStore sessions,
+        IRepositoryStore repositories, IEventStore events, Serilog.ILogger? logger = null)
     {
         _provider = provider;
         _sessions = sessions;
@@ -95,7 +96,7 @@ public sealed class SessionSyncService
     }
 
     /// <summary>The metadata an event consumer can act on. time_updated alone is not one.</summary>
-    private static bool Changed(Stores.SessionRow before, SessionInfo s, string repositoryId) =>
+    private static bool Changed(AgentHQ.Models.SessionRow before, SessionInfo s, string repositoryId) =>
         before.Title != s.Title ||
         before.TaskType != s.TaskType ||
         before.LastOutcome != s.LastOutcome ||

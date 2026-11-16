@@ -7,6 +7,7 @@ using AgentHQ.Core.Domain;
 using AgentHQ.Core.Exchange;
 using AgentHQ.Infrastructure;
 using AgentHQ.Infrastructure.Events;
+using AgentHQ.Infrastructure.PgStores;
 using AgentHQ.Infrastructure.Exchange;
 using AgentHQ.Infrastructure.Services;
 using AgentHQ.Infrastructure.Stores;
@@ -71,8 +72,11 @@ public static class Program
                     fileSizeLimitBytes: 10 * 1024 * 1024,
                     rollOnFileSizeLimit: true));
 
-            var port = int.Parse(Environment.GetEnvironmentVariable("AGENTHQ_PORT") ?? "5317");
-            builder.WebHost.UseUrls($"http://127.0.0.1:{port}");
+            // Bind is configuration, not code: loopback stays the default (widening is a
+            // recorded security decision), AGENTHQ_URL overrides it (container mode).
+            var url = Environment.GetEnvironmentVariable("AGENTHQ_URL")
+                      ?? $"http://127.0.0.1:{Environment.GetEnvironmentVariable("AGENTHQ_PORT") ?? "5317"}";
+            builder.WebHost.UseUrls(url);
 
             var app = await AgentHqHost.BuildAsync(builder, new AgentHqOptions(
                 AgentHqDbPath: Environment.GetEnvironmentVariable("AGENTHQ_DB")
@@ -127,7 +131,7 @@ public static class Program
 /// process derives (reset per in-memory test host so hosts never share files).
 /// </summary>
 public sealed record AgentHqOptions(string AgentHqDbPath, string ZCodeDbPath, bool StartWatchers,
-    string? DataDir = null, string? WorktreesRoot = null);
+    string? DataDir = null, string? WorktreesRoot = null, string? DbProvider = null, string? PgConnStr = null);
 
 /// <summary>
 /// Host composition shared by the real host and the in-memory TestServer: services, endpoint
@@ -144,15 +148,48 @@ public static class AgentHqHost
             o.SerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
         });
 
-        builder.Services.AddSingleton<AgentHqDb>(_ =>
-            new AgentHqDb(options.AgentHqDbPath, logger.ForContext("Subsystem", "db")));
-        builder.Services.AddSingleton(sp => new EventStore(sp.GetRequiredService<AgentHqDb>(),
-            logger.ForContext("Subsystem", "events")));
-        builder.Services.AddSingleton(sp => new RepositoryStore(sp.GetRequiredService<AgentHqDb>(),
-            options.WorktreesRoot));
-        builder.Services.AddSingleton(sp => new SessionStore(sp.GetRequiredService<AgentHqDb>()));
-        builder.Services.AddSingleton(sp => new PlanStore(sp.GetRequiredService<AgentHqDb>()));
-        builder.Services.AddSingleton(sp => new ExchangeStore(sp.GetRequiredService<AgentHqDb>()));
+        // Store provider selection: the laptop (and the future spoke) runs SQLite; the hub on
+        // builds runs PostgreSQL behind the same interfaces. The SQL is never shared — each
+        // provider has its own store classes and its own migration set.
+        var dbProvider = (options.DbProvider
+                          ?? Environment.GetEnvironmentVariable("AGENTHQ_DB_PROVIDER") ?? "sqlite")
+            .Trim().ToLowerInvariant();
+        if (dbProvider == "postgres")
+        {
+            var connStr = options.PgConnStr ?? Environment.GetEnvironmentVariable("AGENTHQ_PG_CONNSTR");
+            if (string.IsNullOrWhiteSpace(connStr))
+                throw new InvalidOperationException(
+                    "AGENTHQ_DB_PROVIDER=postgres but AGENTHQ_PG_CONNSTR is not set. " +
+                    "Set the PostgreSQL connection string (compose provides it as " +
+                    "Host=db;Database=agent_hq;Username=agent_hq;Password=…) or unset " +
+                    "AGENTHQ_DB_PROVIDER to run on SQLite.");
+            builder.Services.AddSingleton<AgentHqPgDb>(_ =>
+                new AgentHqPgDb(connStr, logger.ForContext("Subsystem", "db")));
+            builder.Services.AddSingleton<IAgentHqConnectionFactory>(sp => sp.GetRequiredService<AgentHqPgDb>());
+            builder.Services.AddSingleton<IEventStore>(sp => new EventStorePg(
+                sp.GetRequiredService<AgentHqPgDb>(), logger.ForContext("Subsystem", "events")));
+            builder.Services.AddSingleton<IRepositoryStore>(sp => new RepositoryStorePg(
+                sp.GetRequiredService<AgentHqPgDb>(), options.WorktreesRoot));
+            builder.Services.AddSingleton<ISessionStore>(sp => new SessionStorePg(
+                sp.GetRequiredService<AgentHqPgDb>()));
+            builder.Services.AddSingleton<IPlanStore>(sp => new PlanStorePg(
+                sp.GetRequiredService<AgentHqPgDb>()));
+            builder.Services.AddSingleton<IExchangeStore>(sp => new ExchangeStorePg(
+                sp.GetRequiredService<AgentHqPgDb>()));
+        }
+        else
+        {
+            builder.Services.AddSingleton<AgentHqDb>(_ =>
+                new AgentHqDb(options.AgentHqDbPath, logger.ForContext("Subsystem", "db")));
+            builder.Services.AddSingleton<IAgentHqConnectionFactory>(sp => sp.GetRequiredService<AgentHqDb>());
+            builder.Services.AddSingleton<IEventStore>(sp => new EventStore(sp.GetRequiredService<AgentHqDb>(),
+                logger.ForContext("Subsystem", "events")));
+            builder.Services.AddSingleton<IRepositoryStore>(sp => new RepositoryStore(sp.GetRequiredService<AgentHqDb>(),
+                options.WorktreesRoot));
+            builder.Services.AddSingleton<ISessionStore>(sp => new SessionStore(sp.GetRequiredService<AgentHqDb>()));
+            builder.Services.AddSingleton<IPlanStore>(sp => new PlanStore(sp.GetRequiredService<AgentHqDb>()));
+            builder.Services.AddSingleton<IExchangeStore>(sp => new ExchangeStore(sp.GetRequiredService<AgentHqDb>()));
+        }
         // Exchange configuration is resolved once here, from the environment and the data dir —
         // services never read environment variables themselves (one composition root).
         var exchangeOptions = ExchangeOptions.FromEnvironment(Environment.GetEnvironmentVariable,
@@ -160,34 +197,34 @@ public static class AgentHqHost
         builder.Services.AddSingleton(exchangeOptions);
         builder.Services.AddSingleton(sp => new BlobStore(exchangeOptions.BlobDir, exchangeOptions.BlobMaxBytes));
         builder.Services.AddSingleton(sp => new ExchangeService(
-            sp.GetRequiredService<AgentHqDb>(),
-            sp.GetRequiredService<ExchangeStore>(),
-            sp.GetRequiredService<RepositoryStore>(),
-            sp.GetRequiredService<EventStore>(),
+            sp.GetRequiredService<IAgentHqConnectionFactory>(),
+            sp.GetRequiredService<IExchangeStore>(),
+            sp.GetRequiredService<IRepositoryStore>(),
+            sp.GetRequiredService<IEventStore>(),
             sp.GetRequiredService<BlobStore>(),
             exchangeOptions,
             logger: logger.ForContext("Subsystem", "exchange")));
         builder.Services.AddSingleton(sp => new PlanService(
-            sp.GetRequiredService<PlanStore>(),
-            sp.GetRequiredService<RepositoryStore>(),
-            sp.GetRequiredService<EventStore>(),
+            sp.GetRequiredService<IPlanStore>(),
+            sp.GetRequiredService<IRepositoryStore>(),
+            sp.GetRequiredService<IEventStore>(),
             logger.ForContext("Subsystem", "plans")));
         builder.Services.AddSingleton<IAgentProvider>(_ =>
             new ZCodeAgentProvider(options.ZCodeDbPath, logger));
         builder.Services.AddSingleton(sp => new SessionSyncService(
             sp.GetRequiredService<IAgentProvider>(),
-            sp.GetRequiredService<SessionStore>(),
-            sp.GetRequiredService<RepositoryStore>(),
-            sp.GetRequiredService<EventStore>(),
+            sp.GetRequiredService<ISessionStore>(),
+            sp.GetRequiredService<IRepositoryStore>(),
+            sp.GetRequiredService<IEventStore>(),
             logger));
         builder.Services.AddSingleton(sp => new HookFeedService(
             sp.GetRequiredService<IAgentProvider>(),
-            sp.GetRequiredService<RepositoryStore>(),
-            sp.GetRequiredService<SessionStore>(),
+            sp.GetRequiredService<IRepositoryStore>(),
+            sp.GetRequiredService<ISessionStore>(),
             sp.GetRequiredService<SessionSyncService>(),
-            sp.GetRequiredService<PlanStore>(),
+            sp.GetRequiredService<IPlanStore>(),
             sp.GetRequiredService<PlanService>(),
-            sp.GetRequiredService<EventStore>(),
+            sp.GetRequiredService<IEventStore>(),
             logger));
         builder.Services.AddSingleton<SseHub>();
         builder.Services.AddMcpServer(o =>
@@ -204,15 +241,16 @@ public static class AgentHqHost
         var provider = app.Services.GetRequiredService<IAgentProvider>();
         var sync = app.Services.GetRequiredService<SessionSyncService>();
         var plans = app.Services.GetRequiredService<PlanService>();
-        var sessionStore = app.Services.GetRequiredService<SessionStore>();
+        var sessionStore = app.Services.GetRequiredService<ISessionStore>();
         plans.UseSessions(sessionStore.GetAsync);
-        var repos = app.Services.GetRequiredService<RepositoryStore>();
+        var repos = app.Services.GetRequiredService<IRepositoryStore>();
         var hub = app.Services.GetRequiredService<SseHub>();
-        var events = app.Services.GetRequiredService<EventStore>();
+        var events = app.Services.GetRequiredService<IEventStore>();
         events.Published += hub.PublishAsync;
 
         // migrations + startup full sync + watchers
-        app.Services.GetRequiredService<AgentHqDb>().Migrate(Path.Combine(options.DataDir ?? Program.DataDir, "logs", "migrations.log"));
+        app.Services.GetRequiredService<IAgentHqConnectionFactory>()
+            .Migrate(Path.Combine(options.DataDir ?? Program.DataDir, "logs", "migrations.log"));
         await sync.FullSyncAsync();
         foreach (var repo in await repos.ListAsync())
         {

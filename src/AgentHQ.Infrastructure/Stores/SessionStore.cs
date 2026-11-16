@@ -1,10 +1,11 @@
+using AgentHQ.Models;
 using Dapper;
 using AgentHQ.Core.Domain;
 
 namespace AgentHQ.Infrastructure.Stores;
 
 /// <summary>Mirrors provider session metadata. Messages are read through, never mirrored.</summary>
-public sealed class SessionStore
+public sealed class SessionStore : ISessionStore
 {
     private readonly AgentHqDb _db;
 
