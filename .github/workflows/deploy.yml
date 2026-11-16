@@ -45,37 +45,22 @@ jobs:
           # Live smoke stays off on the runner unless explicitly enabled per run.
           AGENTHQ_LIVE: '0'
 
-  publish:
-    if: vars.RUNNER_ENABLED == 'true'
-    needs: build-and-test
-    runs-on: ${{ fromJSON(env.RUNNER_LABELS) }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
-      # wwwroot/ and Commands/ are publish assets of AgentHQ.Api itself (see its csproj);
-      # no extra copy step. PDBs in the artifact are harmless — deploy drops them.
-      - run: dotnet publish src/AgentHQ.Api -c Release -r linux-x64 --self-contained -p:PublishSingleFile=true -o artifacts
-      - uses: actions/upload-artifact@v4
-        with:
-          name: agent-hq-binary
-          path: artifacts/
-
   deploy:
     if: vars.RUNNER_ENABLED == 'true'
-    needs: publish
+    needs: build-and-test
     runs-on: ${{ fromJSON(env.RUNNER_LABELS) }}
     environment: production
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: agent-hq-binary
-          path: artifacts
-      # One deploy path, used by hand and by CI alike: stop → symlink switch → start →
-      # health (rolls back to the previous release on failure) → prune old releases.
-      - name: deploy
-        run: STAGE_DIR="$PWD/artifacts" bash scripts/agent-hq-deploy.sh
+      # The hub ships as the Docker container on builds (docs/operations.md "Container mode";
+      # docs/plans/distributed-agent-hq part 1). The runner container mounts the host Docker
+      # socket, so this builds the image (tag = git sha) and brings the hub+postgres stack up
+      # on the same machine the runner runs on — one deploy path, used by hand and by CI.
+      # AGENTHQ_PG_PASSWORD comes from the runner's env file on builds, never from the repo.
+      # The publish-artifact stage was retired with the laptop systemd deploy (part 7 cutover
+      # will retire the laptop unit itself); the image build is inside `container up`.
+      - name: deploy (container, builds)
+        run: bash scripts/agent-hq-deploy.sh container up
       - name: verify
+        run: bash scripts/agent-hq-deploy.sh container check
         run: bash scripts/agent-hq-deploy.sh check

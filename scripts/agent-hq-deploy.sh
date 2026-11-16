@@ -401,7 +401,9 @@ main() {
 # Same one deploy path, extended not replaced: builds the image (tag = git sha), brings the
 # compose stack up, waits on the host-loopback health endpoint, and runs the same check gate
 # (a rolled-back container is not a deploy). Requires AGENTHQ_PG_PASSWORD (db credential).
-COMPOSE="docker compose -f $ROOT/compose.yaml"
+# -p pins the project name so CI (whose checkout directory basename varies) and manual runs
+# address the same stack, volumes and containers as a first deploy from ~/apps/agent-hq.
+COMPOSE="docker compose -p agent-hq -f $ROOT/compose.yaml"
 CONTAINER_PORT="${AGENTHQ_PORT:-5317}"
 
 container_healthy() { curl -sf --max-time 2 "http://127.0.0.1:${CONTAINER_PORT}/health" >/dev/null 2>&1; }
