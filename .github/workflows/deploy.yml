@@ -15,16 +15,11 @@ concurrency:
 env:
   DOTNET_NOLOGO: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
-  # Self-hosted runner labels. The deploy target is the same machine as the runner, so the
-  # deploy job runs locally rather than over ssh. Once the runner exists, set repo variable
-  # RUNNER_LABELS (JSON, e.g. ["self-hosted","agent-hq"]) and RUNNER_ENABLED=true; until
-  # then every job is skipped, so a push to main does not queue forever waiting for a runner.
-  RUNNER_LABELS: ${{ vars.RUNNER_LABELS || '["self-hosted"]' }}
 
 jobs:
   build-and-test:
     if: vars.RUNNER_ENABLED == 'true'
-    runs-on: ${{ fromJSON(env.RUNNER_LABELS) }}
+    runs-on: ${{ fromJSON(vars.RUNNER_LABELS || '["self-hosted","agent-hq"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -48,7 +43,7 @@ jobs:
   deploy:
     if: vars.RUNNER_ENABLED == 'true'
     needs: build-and-test
-    runs-on: ${{ fromJSON(env.RUNNER_LABELS) }}
+    runs-on: ${{ fromJSON(vars.RUNNER_LABELS || '["self-hosted","agent-hq"]') }}
     environment: production
     steps:
       - uses: actions/checkout@v4
