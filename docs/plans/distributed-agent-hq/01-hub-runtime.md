@@ -137,6 +137,32 @@ auth, no spokes. It is the behaviour-preserving re-platform that everything else
      up on the laptop (port 5317 is the live hub's; the local docker build was image-only).
   - Environment notes: builds has Docker 29.9.3 + Compose v5.7.1; linger enabled for the
     backup timer; first `pg_dump` produced `backups/20261116/agent-hq-pg.sql.gz` (3.1 KB).
+
+- 2026-11-15 — VERIFIED (independent verification session, branch zcode/distributed-hub-part1
+  at 4f9862c). Each criterion re-proved first-hand, not taken from the record:
+  1. Builds stack live and healthy: `agent-hq-hub-1` / `agent-hq-db-1` both `healthy`; 13
+     public tables + 1 `AgentHqPgSchemaVersions` journal row via `psql`; `/overview` answers
+     over loopback with the registered `/data/demo` repository.
+  2. Full suite re-run locally with Docker up: **183 passed, 4 skipped, 0 failed** (skips are
+     the env-gated `AGENTHQ_LIVE` live smoke tests, named as such); `PostgresHubTests` re-run
+     in isolation against Testcontainers postgres:17-alpine: **6/6 green**. CI run link still
+     outstanding — runner-gated (`RUNNER_ENABLED` unset); suite evidence is local, recorded
+     above.
+  3. Stop/start re-exercised live on builds: `docker stop` → `exit=0, oom=false`; `start` →
+     healthy again; `/overview` sha256-identical before/after (volume persistence).
+  4. Behaviour-preserving confirmed by diff: since `da17ca6` the only test-file changes are
+     store-type/interface swaps plus the new `PostgresHubTests`; `WebUiContractTests` differs
+     by exactly one line (`EventStore` → `IEventStore`), E2E simulation untouched.
+  5. **The unexercised rollback path was exercised** on builds: `container up` with a wrong
+     `AGENTHQ_PG_PASSWORD` → health wait failed within the deadline → `compose down` (db,
+     hub, network removed; volumes kept) → script exit 1. Clean `container up` after →
+     healthy in 9 s, image tag `f80e4c2`, the repository row survived the rollback. Note for
+     the operator: the script's `:?` guard needs `AGENTHQ_PG_PASSWORD` exported in the shell
+     (compose's `.env` does not satisfy it) — `set -a; . ./.env; set +a`.
+  6. Laptop hub untouched: `agent-hq.service` active, provider schema 25, still on
+     SQLite + loopback 5317.
+  Residual: criterion 2's CI run link remains deferred as recorded above; everything else
+  has first-hand evidence.
   - Deviations: (a) `ExchangeService` took an `IAgentHqConnectionFactory` instead of a raw
     `AgentHqDb` so its transaction path is provider-neutral (needed for criterion 2's
     PostgreSQL suite); (b) Dapper's automatic `IN @list` expansion is incompatible with
@@ -147,3 +173,16 @@ auth, no spokes. It is the behaviour-preserving re-platform that everything else
     NU1903 (high-severity advisory) against SQLitePCLRaw 2.1.11 via Microsoft.Data.Sqlite
     10.0.0 — pre-existing, flagged for a dedicated dependency-commit fix, not mixed into
     this one.
+- 2026-11-16 — VERIFIED + CI evidence added. Criterion 2's deferred clause is now closed:
+  full suite green on the builds runner with Docker available, Postgres-bound tests included —
+  run https://github.com/benow/agent-hq/actions/runs/43797543767 (build-and-test + deploy,
+  both success). The same run performed the first CI-driven container deploy: image
+  agent-hq:6d938f8 built from the push, stack composed up, health-wait and container check
+  green; the live hub on builds now runs that image. En route, two deploy-script defects were
+  found and fixed (health probe must go via compose exec — the CI runner container's loopback
+  is not the host's; `container <action>` read the action from the wrong positional after
+  main's shift). The workflow itself had never executed on GitHub — every run since 2026-10-31
+  failed at 0s because `runs-on` cannot use the `env` context; fixed (actionlint) and the
+  runner (container `agent-hq-runner` on builds, socket-mounted, nastv NAS-runner pattern with
+  DISABLE_AUTO_UPDATE=1) is online with repo variables RUNNER_ENABLED=true,
+  RUNNER_LABELS=["self-hosted","agent-hq"].

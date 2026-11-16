@@ -269,3 +269,9 @@ their plan's Status Log when part 5 is approved.
   pg_dump timer installed (first dump verified). Full suite green; Postgres-bound tests
   6/6 via Testcontainers. Awaiting verification by a different session per the gate rule —
   parts 2+ do not start before that.
+- 2026-11-16 — CI LANDS ON BUILDS (laptop retirement begins). Runner container online
+  (agent-hq-builds), RUNNER_ENABLED=true; the deploy job drives `container up` — the hub's
+  deploy target is the Docker stack on builds, not the laptop's systemd unit. First green run:
+  https://github.com/benow/agent-hq/actions/runs/43797543767 (closes part 1 criterion 2's CI
+  clause; evidence also in 01's Status Log). Part 1 now verified in a different session per
+  the gate rule; parts 2–7 unblock in dependency order.
