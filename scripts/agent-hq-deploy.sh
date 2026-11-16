@@ -406,7 +406,12 @@ main() {
 COMPOSE="docker compose -p agent-hq -f $ROOT/compose.yaml"
 CONTAINER_PORT="${AGENTHQ_PORT:-5317}"
 
-container_healthy() { curl -sf --max-time 2 "http://127.0.0.1:${CONTAINER_PORT}/health" >/dev/null 2>&1; }
+# Probe through the compose stack, not the host loopback: the CI runner is itself a
+# container whose 127.0.0.1 is not the host's, so the published port is invisible from
+# there. compose exec reaches the hub container via the Docker socket from anywhere.
+container_healthy() {
+  $COMPOSE exec -T hub curl -sf --max-time 2 "http://127.0.0.1:${CONTAINER_PORT}/health" >/dev/null 2>&1;
+}
 container_wait_healthy() {
   local started=$SECONDS
   while [ $((SECONDS - started)) -lt "$HEALTH_DEADLINE" ]; do
@@ -417,12 +422,13 @@ container_wait_healthy() {
 }
 
 cmd_container() {
+  local action="${1:-up}"
   command -v docker >/dev/null 2>&1 || die "docker is not available — container mode needs it"
   [ -f "$ROOT/compose.yaml" ] || die "compose.yaml missing in $ROOT"
   : "${AGENTHQ_PG_PASSWORD:?set AGENTHQ_PG_PASSWORD (the PostgreSQL credential) before deploying container mode}"
   export AGENTHQ_IMAGE_TAG="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo local)"
 
-  case "${2:-up}" in
+  case "$action" in
     up)
       local started=$SECONDS
       log "building image agent-hq:$AGENTHQ_IMAGE_TAG"
@@ -430,7 +436,7 @@ cmd_container() {
       log "starting hub + db"
       $COMPOSE up -d
       if container_wait_healthy; then
-        log "healthy after $((SECONDS - started))s: $(curl -s --max-time 2 http://127.0.0.1:${CONTAINER_PORT}/health)"
+        log "healthy after $((SECONDS - started))s"
         cmd_container_check
       else
         log "container hub did not become healthy within ${HEALTH_DEADLINE}s — rolling back"
@@ -448,13 +454,13 @@ cmd_container() {
       $COMPOSE down
       log "stopped (volumes kept; 'down -v' would erase the database — never a deploy action)"
       ;;
-    *) die "unknown container action '$2' (up|check|logs|down)" ;;
+    *) die "unknown container action '$action' (up|check|logs|down)" ;;
   esac
 }
 
 cmd_container_check() {
-  container_healthy || { echo "unhealthy: $(curl -s --max-time 2 http://127.0.0.1:${CONTAINER_PORT}/health || echo '(no response)')"; $COMPOSE ps; return 1; }
-  echo "healthy: $(curl -s --max-time 2 http://127.0.0.1:${CONTAINER_PORT}/health)"
+  container_healthy || { echo "unhealthy: no /health answer from the hub container"; $COMPOSE ps; return 1; }
+  echo "healthy: $($COMPOSE exec -T hub curl -s --max-time 2 http://127.0.0.1:${CONTAINER_PORT}/health)"
   $COMPOSE ps
 }
 
