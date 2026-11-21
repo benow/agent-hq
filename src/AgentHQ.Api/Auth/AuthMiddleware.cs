@@ -76,7 +76,7 @@ public sealed class AuthMiddleware
             return;
         }
 
-        if (isLoginRequest)
+        if (isLoginRequest || path == "/login")
         {
             ctx.Items[AgentHqPrincipalExtensions.ItemsKey] = null; // anonymous login (rate-limited in the service)
             await _next(ctx);
@@ -86,6 +86,16 @@ public sealed class AuthMiddleware
         var principal = await ResolveTokenAsync(ctx, path, source);
         if (principal is null)
         {
+            // A browser navigating gets the login page, not a JSON 401: API clients keep the
+            // machine shape. Navigation is GET/HEAD with text/html accepted (an SSE
+            // EventSource sends text/event-stream and still gets the JSON 401).
+            var wantsHtml = (method == "GET" || method == "HEAD")
+                            && ctx.Request.Headers.Accept.ToString().Contains("text/html");
+            if (wantsHtml)
+            {
+                ctx.Response.Redirect("/login");
+                return;
+            }
             await _identities.DenyAsync("no valid token", path, source);
             ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
             await WriteErrorAsync(ctx, "unauthorized");

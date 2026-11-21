@@ -337,6 +337,14 @@ public static class AgentHqHost
         app.MapPost("/hooks/zcode/prompts", HookFeedService.HandleAsync);
         app.MapAuth();
         app.MapMcp("/mcp");
+        // The login page (auth middleware lets /login through anonymous; the redirect target
+        // of the browser-negotiated 302). Served from wwwroot like the rest of the UI.
+        app.MapGet("/login", async (HttpContext ctx) =>
+        {
+            ctx.Response.ContentType = "text/html";
+            await ctx.Response.SendFileAsync(
+                Path.Combine(AppContext.BaseDirectory, "wwwroot", "login.html"));
+        });
 
         // Web UI: plain static files, no build step (wwwroot/). Falls through to the API routes.
         app.UseDefaultFiles();

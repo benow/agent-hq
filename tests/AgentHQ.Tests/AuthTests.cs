@@ -112,6 +112,30 @@ public class AuthTests(AuthFixture app) : IClassFixture<AuthFixture>
     }
 
     [Fact]
+    public async Task Browser_Navigation_Is_Redirected_To_Login_Page()
+    {
+        // Found in the 2026-11-21 LAN verification: a browser at "/" got the API's JSON 401
+        // because the UI had no login surface at all. HTML navigation gets /login; machine
+        // clients keep the JSON shape.
+        var nav = await LanAsync(HttpMethod.Get, "/", configure: m =>
+            m.Headers.Accept.ParseAdd("text/html"));
+        Assert.Equal(HttpStatusCode.Found, nav.StatusCode);
+        Assert.Equal("/login", nav.Headers.Location?.ToString());
+
+        var loginPage = await LanAsync(HttpMethod.Get, "/login", configure: m =>
+            m.Headers.Accept.ParseAdd("text/html"));
+        Assert.Equal(HttpStatusCode.OK, loginPage.StatusCode);
+        Assert.Contains("text/html", loginPage.Content.Headers.ContentType?.MediaType);
+
+        // API-shaped requests are not redirected — no Accept text/html, no Accept at all.
+        Assert.Equal(HttpStatusCode.Unauthorized, (await LanAsync(HttpMethod.Get, "/overview")).StatusCode);
+        var jsonNav = await LanAsync(HttpMethod.Get, "/overview", configure: m =>
+            m.Headers.Accept.ParseAdd("application/json"));
+        Assert.Equal(HttpStatusCode.Unauthorized, jsonNav.StatusCode);
+        Assert.Contains("unauthorized", await jsonNav.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
     public async Task Token_Grant_Login_And_Authenticated_Access()
     {
         await SeedIdentitiesAsync();
