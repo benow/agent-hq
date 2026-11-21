@@ -38,8 +38,14 @@ services:
       AGENTHQ_ADMIN_USER: ${AGENTHQ_ADMIN_USER:-}
       AGENTHQ_ADMIN_PASSWORD: ${AGENTHQ_ADMIN_PASSWORD:-}
       AGENTHQ_EDGE_TOKEN: ${AGENTHQ_EDGE_TOKEN:-}
+      # The in-container bind. Widening beyond loopback inside the container is required for
+      # any host port publish to work; the exposure decision is the HOST bind below —
+      # keep AGENTHQ_BIND on the LAN address, never 0.0.0.0 on a dual-homed host.
+      AGENTHQ_URL: ${AGENTHQ_URL:-http://127.0.0.1:5317}
     ports:
-      - "127.0.0.1:5317:5317"
+      # Widening the host bind past loopback is the recorded security decision of
+      # docs/plans/distributed-agent-hq/02-auth.md — auth must be live first.
+      - "${AGENTHQ_BIND:-127.0.0.1}:5317:5317"
     volumes:
       - agent-hq-data:/data
     healthcheck:
