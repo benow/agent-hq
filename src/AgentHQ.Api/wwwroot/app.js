@@ -841,6 +841,8 @@ $("#priority-form").addEventListener("submit", async (e) => {
   await run(() => api(`/plans/${plan.id}`, { method: "PATCH", body: JSON.stringify({ priority }) }));
 });
 $("#btn-submit").addEventListener("click", openSubmit);
+$("#submit-form").addEventListener("submit", submitPlan);
+$("#repo-form").addEventListener("submit", registerRepo);
 $("#btn-repos").addEventListener("click", () => $("#repos-dialog").showModal());
 $("#btn-cancel-submit").addEventListener("click", () => $("#submit-dialog").close());
 $("#btn-cancel-repo").addEventListener("click", () => $("#repos-dialog").close());

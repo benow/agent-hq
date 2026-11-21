@@ -33,6 +33,16 @@ public class WebUiContractTests(AgentHQApp app) : IClassFixture<AgentHQApp>
     }
 
     [Fact]
+    public async Task AppJsWiresEverySubmitHandler()
+    {
+        // Regression 2026-11-21: submitPlan and registerRepo were defined but never wired, so the
+        // dashboard's Submit plan and Repositories dialogs silently did nothing (demo seed masked it).
+        var appJs = await app.Client.GetStringAsync("/app.js");
+        Assert.Contains("$(\"#submit-form\").addEventListener(\"submit\", submitPlan)", appJs);
+        Assert.Contains("$(\"#repo-form\").addEventListener(\"submit\", registerRepo)", appJs);
+    }
+
+    [Fact]
     public async Task AssetsMakeNoExternalRequests()
     {
         foreach (var path in new[] { "/", "/app.js", "/ui.css" })
