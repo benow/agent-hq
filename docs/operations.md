@@ -193,28 +193,80 @@ through the hook feed, edits plan files through the real watchers, reconnects SS
 The test harness occasionally aborts before running any test immediately after a build (the CLR
 `0x80131506` quirk above). Re-run before assuming a failure.
 
+## Identities and authentication
+
+Since the auth part of distributed-agent-hq (2026-11-16), the perimeter is: **loopback trusted,
+everything else authenticated**. The ZCode hook keeps its no-token, `|| true` contract because it
+arrives on loopback. Non-loopback requests (LAN bind, external MCP point) need a bearer token or
+session cookie on every route — REST, SSE, MCP and static UI alike. Endpoint reference:
+[API → Authentication](features/api.md#authentication).
+
+### Identity bootstrap
+
+On first start with both set:
+
+```bash
+AGENTHQ_ADMIN_USER=andy AGENTHQ_ADMIN_PASSWORD=…   # compose: put them in the stack env
+```
+
+the admin identity is created **before the port opens**. Later starts with the same variables
+warn and ignore — bootstrap is first-start only; the env never overwrites an existing identity.
+Further identities come from the admin-only endpoints (`POST /auth/identities` with role
+`admin` / `agent` / `worker` / `ci` — see the roles table in the API reference).
+
+Passwords are PBKDF2 (210k iterations, per-user salt); bearer tokens are random 256-bit values
+stored only as SHA-256 hashes. Tokens have **no expiry by default** — recorded as an accepted
+risk for a LAN with named principals; revisit if exposure widens beyond the external MCP point.
+
+### Token revocation runbook
+
+- One token lost (a laptop, a leaked key): `POST /auth/tokens/{id}/revoke` (admin).
+- A whole identity compromised or a machine retired:
+  `POST /auth/identities/{username}/revoke-tokens` — kills every live token at once.
+- The person revokes themselves: `POST /auth/logout` kills the presented credential.
+- Deleted identities (`DELETE /auth/identities/{username}`) lose their tokens with them.
+
+### The audit trail
+
+`auth_audit` rows are append-only: `login_ok`, `login_failed` (username, route, source),
+`denied` (route + source — the "why did nothing happen" answer), `rate_limited`,
+`token_revoked`, `bootstrap_*`. Log lines carry `Subsystem: auth`. Five failed logins from one
+source inside ten minutes arm a five-minute per-source login backoff (`429 rate_limited`); the
+rate limit is in-process — a restart clears the backoff window, the audit rows persist.
+
+### The external access point (Linda V1) — a recorded security decision
+
+The external MCP point is **deliberate and recorded, never a config default**: an edge vhost in
+nastv's edge config (candidate: the nastv-external NAS edge, which sits LAN-adjacent to builds —
+see nastv `AGENTS.infrastructure.md`) proxies TLS to the hub's `/auth/login` and `/mcp` only,
+presenting the shared `X-AgentHQ-Edge` secret the hub demands before trusting the forwarding.
+The hub answers **404, not 401**, for every other path through the edge — a remote caller cannot
+confirm which surfaces exist. Prerequisites before standing it up: Linda V1's placement probe
+(where she actually runs and that she can reach the edge host), Andy's explicit approval
+(widening exposure is a security decision), and the hub bind widened from loopback on builds.
+
 ## Security and limits
 
-Agent HQ is built for a **single-user machine**: it binds only to `127.0.0.1`, and it has **no
-authentication** on any endpoint — REST, SSE, MCP, or the hook feed.
+Agent HQ is built for a **single-user machine**: by default it binds only to `127.0.0.1`, where
+requests are trusted without credentials (the hook, local curl). Everything beyond loopback —
+once the bind is widened (`AGENTHQ_URL`) — requires a token on every route; there is no
+anonymous anything on non-loopback.
 
 What that means, concretely:
 
-- Any local process can read every session digest and plan, move any plan, and inject events.
-  That is acceptable if the local user is the trust boundary; it is not acceptable if you share
-  the machine with untrusted users.
-- It stores no credentials and mirrors no message content into its own database — session
-  transcripts are read from ZCode's index on demand. Logs can still contain plan slugs, session
-  titles and rejected prompts (truncated).
+- Any **local** process can read every session digest and plan, move any plan, and inject
+  events. That is acceptable if the local user is the trust boundary; it is not acceptable if
+  you share the machine with untrusted users.
+- It stores hashed passwords and token hashes only, and mirrors no message content into its own
+  database — session transcripts are read from ZCode's index on demand. Logs can still contain
+  plan slugs, session titles and rejected prompts (truncated).
 - The hook endpoint validates that `cwd` resolves under a registered repository, so it cannot
-  be used to move plans belonging to unknown paths through attribution, but it is not an
-  authorisation boundary.
+  be used to move plans belonging to unknown paths through attribution; it is loopback-trusted
+  by the perimeter, and non-loopback hook calls need a `ci` credential.
 
-**Do not expose it beyond loopback without adding authentication.** If you need remote access,
-the safe shape is an authenticated reverse proxy (TLS plus a token or client certificate) in
-front of the whole service, and a scoped proxy in front of `/mcp` if you only want to expose the
-agent façade. Binding `0.0.0.0` by changing the host is a deliberate decision, not a
-configuration tweak.
+**Do not widen the bind without the identities above.** `AGENTHQ_URL` beyond loopback is a
+deliberate decision, not a configuration tweak — and the external MCP point additionally needs
+the recorded edge decision.
 
 ## Data retention
 

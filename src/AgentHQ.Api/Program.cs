@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Text.Json.Serialization;
+using AgentHQ.Api.Auth;
 using AgentHQ.Api.Endpoints;
 using AgentHQ.Api.Mcp;
 using AgentHQ.Api.Services;
@@ -83,7 +84,10 @@ public static class Program
                               ?? Path.Combine(DataDir, "agent-hq.sqlite"),
                 ZCodeDbPath: ResolveZCodeDbPath(),
                 StartWatchers: true,
-                WorktreesRoot: ResolveWorktreesRoot()),
+                WorktreesRoot: ResolveWorktreesRoot(),
+                AdminUser: Environment.GetEnvironmentVariable("AGENTHQ_ADMIN_USER"),
+                AdminPassword: Environment.GetEnvironmentVariable("AGENTHQ_ADMIN_PASSWORD"),
+                EdgeToken: Environment.GetEnvironmentVariable("AGENTHQ_EDGE_TOKEN")),
                 Log.Logger);
             await app.RunAsync();
             return 0;
@@ -129,9 +133,13 @@ public static class Program
 /// <summary>
 /// Host options. <paramref name="DataDir"/> is the root for provider logs and any data the
 /// process derives (reset per in-memory test host so hosts never share files).
+/// <paramref name="AdminUser"/>/<paramref name="AdminPassword"/> are the first-start admin
+/// bootstrap (AGENTHQ_ADMIN_USER / AGENTHQ_ADMIN_PASSWORD); <paramref name="EdgeToken"/> is
+/// the shared secret the external edge proxy must present (AGENTHQ_EDGE_TOKEN).
 /// </summary>
 public sealed record AgentHqOptions(string AgentHqDbPath, string ZCodeDbPath, bool StartWatchers,
-    string? DataDir = null, string? WorktreesRoot = null, string? DbProvider = null, string? PgConnStr = null);
+    string? DataDir = null, string? WorktreesRoot = null, string? DbProvider = null, string? PgConnStr = null,
+    string? AdminUser = null, string? AdminPassword = null, string? EdgeToken = null);
 
 /// <summary>
 /// Host composition shared by the real host and the in-memory TestServer: services, endpoint
@@ -176,6 +184,8 @@ public static class AgentHqHost
                 sp.GetRequiredService<AgentHqPgDb>()));
             builder.Services.AddSingleton<IExchangeStore>(sp => new ExchangeStorePg(
                 sp.GetRequiredService<AgentHqPgDb>()));
+            builder.Services.AddSingleton<IIdentityStore>(sp => new Infrastructure.PgStores.IdentityStorePg(
+                sp.GetRequiredService<AgentHqPgDb>()));
         }
         else
         {
@@ -189,6 +199,7 @@ public static class AgentHqHost
             builder.Services.AddSingleton<ISessionStore>(sp => new SessionStore(sp.GetRequiredService<AgentHqDb>()));
             builder.Services.AddSingleton<IPlanStore>(sp => new PlanStore(sp.GetRequiredService<AgentHqDb>()));
             builder.Services.AddSingleton<IExchangeStore>(sp => new ExchangeStore(sp.GetRequiredService<AgentHqDb>()));
+            builder.Services.AddSingleton<IIdentityStore>(sp => new IdentityStore(sp.GetRequiredService<AgentHqDb>()));
         }
         // Exchange configuration is resolved once here, from the environment and the data dir —
         // services never read environment variables themselves (one composition root).
@@ -209,6 +220,12 @@ public static class AgentHqHost
             sp.GetRequiredService<IRepositoryStore>(),
             sp.GetRequiredService<IEventStore>(),
             logger.ForContext("Subsystem", "plans")));
+        builder.Services.AddSingleton(sp => new IdentityService(
+            sp.GetRequiredService<IIdentityStore>(),
+            logger.ForContext("Subsystem", "auth")));
+        // MCP tool attribution: a tool call carries the authenticated identity as its actor
+        // (parity with sessions); the accessor is how the tool façade reads the request.
+        builder.Services.AddHttpContextAccessor();
         builder.Services.AddSingleton<IAgentProvider>(_ =>
             new ZCodeAgentProvider(options.ZCodeDbPath, logger));
         builder.Services.AddSingleton(sp => new SessionSyncService(
@@ -238,6 +255,10 @@ public static class AgentHqHost
 
         var app = builder.Build();
 
+        // The perimeter middleware runs first so every route — REST, SSE, MCP, static UI,
+        // static everything — is behind it (loopback trusted, tokens elsewhere, edge 404s).
+        app.UseAuth(options.EdgeToken);
+
         var provider = app.Services.GetRequiredService<IAgentProvider>();
         var sync = app.Services.GetRequiredService<SessionSyncService>();
         var plans = app.Services.GetRequiredService<PlanService>();
@@ -252,6 +273,9 @@ public static class AgentHqHost
         app.Services.GetRequiredService<IAgentHqConnectionFactory>()
             .Migrate(Path.Combine(options.DataDir ?? Program.DataDir, "logs", "migrations.log"));
         await sync.FullSyncAsync();
+        // First-start admin bootstrap: idempotent by username; later starts warn and ignore.
+        await app.Services.GetRequiredService<IdentityService>()
+            .BootstrapAdminAsync(options.AdminUser, options.AdminPassword);
         foreach (var repo in await repos.ListAsync())
         {
             plans.StartWatcher(repo);
@@ -311,6 +335,7 @@ public static class AgentHqHost
         app.MapExchange();
         app.MapEvents();
         app.MapPost("/hooks/zcode/prompts", HookFeedService.HandleAsync);
+        app.MapAuth();
         app.MapMcp("/mcp");
 
         // Web UI: plain static files, no build step (wwwroot/). Falls through to the API routes.

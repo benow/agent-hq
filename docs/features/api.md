@@ -1,15 +1,84 @@
 # API reference
 
-All endpoints are served on `127.0.0.1:<port>` (default `5317`). There is no authentication:
-the service is loopback-only. JSON is camelCase; null fields are omitted.
+JSON is camelCase; null fields are omitted. Requests arriving on **loopback are trusted** — no
+credentials (the ZCode hook keeps its no-token contract). Everything else — the LAN bind, the
+external MCP point — requires a **bearer token or session cookie on every route**: REST, SSE,
+MCP and the static UI. See [Authentication](#authentication).
 
 Conventions used below:
 
 - **IDs** — a plan id is a GUID; a repository id is the slug of its absolute root path. Wherever a
   repository is accepted, its full root path is accepted too.
 - **Times** — ISO-8601 with offset in responses; integer epoch milliseconds in the database.
-- **Status codes** — `400` malformed or unknown values, `404` unknown plan, `422` a rule
-  refused the request (the body says which: `{"ok":false,"error":"…"}`).
+- **Status codes** — `400` malformed or unknown values, `401` missing/invalid credentials or bad
+  login, `403` an authenticated role not permitted on the route, `404` unknown plan, `422` a rule
+  refused the request (the body says which: `{"ok":false,"error":"…"}`), `429` login rate limit.
+
+## Authentication
+
+Name/password identities, per the recorded simplification. Passwords are PBKDF2 hashes
+(210k iterations, per-user salt); bearer tokens are random 256-bit values stored **hashed**;
+revocable individually and per identity. No expiry by default — a LAN with a handful of named
+principals; revisited if exposure widens beyond the external MCP point.
+
+### Roles (not scopes)
+
+| Role | Gets |
+|---|---|
+| `admin` | Everything, including identity management |
+| `agent` | Reads, plan commands, exchange, MCP — the Linda (project-manager) role |
+| `worker` | The spoke endpoints only (they arrive with the spoke part; nothing yet) |
+| `ci` | The hook ingest endpoint only |
+
+Loopback requests carry full trust regardless of identities.
+
+### `POST /auth/login`
+
+```json
+{"username": "linda", "password": "…", "grant": "token"}
+```
+
+- `grant: "token"` (default) → `{"ok":true,"token":"…","identity":{"username","role"}}` — for
+  API/MCP clients, spokes and CI. Send as `Authorization: Bearer <token>`.
+- `grant: "cookie"` → `Set-Cookie: agent_hq_token=…; HttpOnly; SameSite=Lax` and no token in the
+  body — for the browser; the EventSource SSE reconnect keeps working, and there are no
+  query-string tokens (they leak into logs).
+
+Failures: `401 {"ok":false,"error":"bad_credentials"}`; after repeated failures from one source,
+`429 {"ok":false,"error":"rate_limited"}` (five failures in ten minutes arms a five-minute
+backoff per source). Every login, failure, rate-limit and denial writes an `auth_audit` row and a
+log line with `Subsystem: auth`.
+
+### `POST /auth/logout`
+
+Revokes the presented credential (cookie or bearer). `422` on loopback (no token to revoke).
+
+### Identity management (admin only)
+
+- `GET /auth/identities` — list.
+- `POST /auth/identities` `{"username","password","role"}` → `201`; `422` on a taken username or
+  an unknown role.
+- `DELETE /auth/identities/{username}` — deletes the identity and its tokens (audit rows kept).
+- `POST /auth/identities/{username}/revoke-tokens` — revoke every live token of one identity.
+- `POST /auth/tokens/{id}/revoke` — revoke one token (`404` unknown).
+
+Bootstrap: on first start with `AGENTHQ_ADMIN_USER` and `AGENTHQ_ADMIN_PASSWORD` set, the admin
+identity is created before the port opens. Later starts with the same variables warn and ignore
+(bootstrap is first-start only; to change the password, delete and recreate the identity).
+
+### External access point (Linda V1)
+
+Requests through the trusted edge proxy (identified by the `X-AgentHQ-Edge` secret header,
+`AGENTHQ_EDGE_TOKEN`) are restricted to `POST /auth/login` and `/mcp`. **Every other path
+answers `404`, never `401`** — a remote caller must not be able to confirm which surfaces exist.
+The UI and everything else stay LAN-only, permanently. Standing the edge up is a recorded
+security decision — see [Operations](../operations.md#identities-and-authentication).
+
+### MCP
+
+MCP requires the `agent` role (or `admin`). A tool call by an authenticated identity records
+that identity as the actor in what the tool writes (plan history, exchange rows) — attribution
+parity with sessions.
 
 ## Health and overview
 

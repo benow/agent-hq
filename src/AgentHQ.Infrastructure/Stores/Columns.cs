@@ -63,4 +63,18 @@ internal static class Columns
     public static string WithPrefix(string list, string prefix) =>
         string.Join(", ", list.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(p => prefix + p));
+
+    public const string Identity = """
+        id AS Id, username AS Username, role AS Role, password_hash AS PasswordHash, created_at AS CreatedAt
+        """;
+
+    public const string AuthToken = """
+        id AS Id, identity_id AS IdentityId, token_hash AS TokenHash, label AS Label,
+        created_at AS CreatedAt, revoked_at AS RevokedAt
+        """;
+
+    public const string AuthAudit = """
+        seq AS Seq, at AS At, kind AS Kind, username AS Username, route AS Route,
+        source AS Source, detail AS Detail
+        """;
 }

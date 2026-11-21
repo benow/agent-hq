@@ -146,3 +146,16 @@ specific project roots, not a home directory.
 
 `ResolveByCwdAsync` uses the **longest registered root path that is a prefix** of the cwd. Paths
 are normalised before comparison; keep it that way or `/foo` will match `/foobar`.
+
+## Auth stores and the migration loader
+
+- Identity/token/audit stores are provider-paired like the rest (`IdentityStore` /
+  `IdentityStorePg` over `IIdentityStore`); tables from `Migrations/0004_Auth.sql` and
+  `Migrations.Pg/0002_Auth.sql`. Tokens are stored only as SHA-256 hashes; passwords as PBKDF2
+  (`Core.Auth.PasswordHasher`). `auth_audit` is append-only — no updates, no deletes, ever.
+- **Each dialect's loader filters its own set.** `AgentHqDb.Migrate` excludes
+  `.Migrations.Pg.` resources and `AgentHqPgDb.Migrate` includes only them. Before part 2 the
+  two sets did not collide only because both 0001 scripts shared the filename — the journal
+  swallowed one. The loader also **keeps full resource names as journal keys** (that is what
+  deployed SQLite journals hold); do not "tidy" them into short names or every deployed db
+  re-runs every script at next boot.

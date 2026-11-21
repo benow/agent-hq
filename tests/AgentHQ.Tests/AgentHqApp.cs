@@ -21,7 +21,7 @@ namespace AgentHQ.Tests;
 /// tree with docs/plans/, real FileSystemWatchers. Tests trigger watchers by writing files
 /// and poll time-boxed instead of sleeping blindly.
 /// </summary>
-public sealed class AgentHQApp : IAsyncLifetime
+public class AgentHQApp : IAsyncLifetime
 {
     // Repositories are keyed by the synthetic zcode db's session.directory, so each test class
     // (own fixture instance) must own its own directory tree: xUnit runs classes in parallel.
@@ -46,6 +46,16 @@ public sealed class AgentHQApp : IAsyncLifetime
     /// (Testcontainers-backed tests). Never via process env — classes run in parallel.</summary>
     public string? DbProvider { get; init; }
     public string? PgConnStr { get; init; }
+
+    /// <summary>First-start admin bootstrap and the trusted-edge token (auth, part 2) —
+    /// passed through options, never process env, so parallel classes stay isolated.</summary>
+    public string? AdminUser { get; init; }
+    public string? AdminPassword { get; init; }
+    public string? EdgeToken { get; init; }
+
+    /// <summary>Auth-fixture hosts turn the ZCode watcher off: they never touch sessions and
+    /// the full-suite parallel run is right at the 128-instance inotify budget (lessons.md).</summary>
+    public bool StartWatchers { get; init; } = true;
 
     public void SetEnvironment(string name, string? value)
     {
@@ -75,8 +85,9 @@ public sealed class AgentHQApp : IAsyncLifetime
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
         var app = await AgentHqHost.BuildAsync(builder, new AgentHqOptions(AgentHqDbPath, ZCode.DbPath,
-            StartWatchers: true, DataDir: Path.Combine(RootDir, "data"), WorktreesRoot: worktreesRoot,
-            DbProvider: DbProvider, PgConnStr: PgConnStr), Log);
+            StartWatchers: StartWatchers, DataDir: Path.Combine(RootDir, "data"), WorktreesRoot: worktreesRoot,
+            DbProvider: DbProvider, PgConnStr: PgConnStr,
+            AdminUser: AdminUser, AdminPassword: AdminPassword, EdgeToken: EdgeToken), Log);
         await app.StartAsync();
         return app;
     }

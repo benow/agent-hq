@@ -32,6 +32,12 @@ services:
       # Loopback-only on the host until part 2 lands auth; the ZCode provider is not
       # configured in the container — the hub degrades to "no sessions" by design.
       AGENTHQ_ZCODE_DB: /nonexistent/db.sqlite
+      # Auth (part 2). First-start admin bootstrap is idempotent: later restarts with the
+      # same variables warn and ignore. The edge token is the secret the external vhost must
+      # present (X-AgentHQ-Edge); unset means no edge forwarding is trusted.
+      AGENTHQ_ADMIN_USER: ${AGENTHQ_ADMIN_USER:-}
+      AGENTHQ_ADMIN_PASSWORD: ${AGENTHQ_ADMIN_PASSWORD:-}
+      AGENTHQ_EDGE_TOKEN: ${AGENTHQ_EDGE_TOKEN:-}
     ports:
       - "127.0.0.1:5317:5317"
     volumes:

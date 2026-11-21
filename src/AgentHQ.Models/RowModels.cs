@@ -158,3 +158,39 @@ public sealed class ExchangeCursorRow
     public long LastSeq { get; set; }
     public long UpdatedAt { get; set; }
 }
+
+// ---- auth (part 2 of distributed-agent-hq): identities, tokens, audit ----
+
+public sealed class IdentityRow
+{
+    public string Id { get; set; } = "";
+    public string Username { get; set; } = "";
+    public string Role { get; set; } = "";
+    public string PasswordHash { get; set; } = "";
+    public long CreatedAt { get; set; }
+
+    public DateTimeOffset Created => DateTimeOffset.FromUnixTimeMilliseconds(CreatedAt);
+}
+
+public sealed class AuthTokenRow
+{
+    public string Id { get; set; } = "";
+    public string IdentityId { get; set; } = "";
+    public string TokenHash { get; set; } = "";
+    public string? Label { get; set; }
+    public long CreatedAt { get; set; }
+    public long? RevokedAt { get; set; }
+
+    public bool RevokedBool => RevokedAt is not null;
+}
+
+public sealed class AuthAuditRow
+{
+    public long Seq { get; set; }
+    public long At { get; set; }
+    public string Kind { get; set; } = "";
+    public string? Username { get; set; }
+    public string? Route { get; set; }
+    public string? Source { get; set; }
+    public string? Detail { get; set; }
+}

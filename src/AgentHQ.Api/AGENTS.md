@@ -26,8 +26,21 @@ Behaviour is documented in [docs/features/api.md](../../docs/features/api.md),
 
 ## Endpoints
 
-- Registered in `ApiEndpoints.MapRepositories/MapSessions/MapPlans`, `SseEndpoints.MapEvents`, and
-  inline in `BuildAsync` (`/health`, `/overview`, `/hooks/zcode/prompts`, `/mcp`).
+- Registered in `ApiEndpoints.MapRepositories/MapSessions/MapPlans`, `AuthEndpoints.MapAuth`,
+  `SseEndpoints.MapEvents`, and inline in `BuildAsync` (`/health`, `/overview`,
+  `/hooks/zcode/prompts`, `/mcp`).
+- **Auth is the first middleware** (`app.UseAuth(options.EdgeToken)` immediately after
+  `builder.Build()`), so every route — REST, SSE, MCP, static — is behind it. It is registered
+  as a factory (`Use(next => new AuthMiddleware(...))`), not `UseMiddleware<T>(args)`: the
+  reflection binder cannot match the string edge-token argument. Loopback (or a null remote —
+  the in-memory test server) is trusted with a synthetic admin principal; elsewhere a bearer
+  token or the `agent_hq_token` cookie resolves an identity; `POST /auth/login` passes
+  anonymously (the rate limit and audit live in `IdentityService`). Edge-forwarded requests
+  (matching `X-AgentHQ-Edge` secret) are restricted to `/auth/login` + `/mcp`, everything else
+  404 — never 401. Role enforcement is one helper, `AuthPolicy.IsAllowed`, consulted by the
+  middleware; endpoints never re-check roles (double-enforcement drifts).
+- **MCP tools read the caller via `IHttpContextAccessor`** for attribution (`UpdatePlanStatus`
+  records the authenticated username as the actor; loopback keeps `openclaw`).
 - **The `/events` route is special-cased** (`MapEvents` streams SSE; `?sinceSeq=` switches to JSON)
   — do not add `MapGet("/events", …)` elsewhere; minimal APIs reject a duplicate route at startup.
 - **JSON policy** is set once in `BuildAsync` (camelCase, nulls omitted). Event payloads use

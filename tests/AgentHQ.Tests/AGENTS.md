@@ -85,3 +85,20 @@ one of those flows.
   reason.
 - A test that is green alone but red in the suite is almost always shared state (a directory tree, a
   port, a database path) or a timing assumption. Fix the isolation; do not add sleeps.
+
+## Auth tests and non-loopback requests
+
+- The in-memory host always sees loopback (or null) remote addresses, so the trusted path is
+  the default. **Non-loopback requests use `TestServer.CreateHandler(ctx =>
+  ctx.Connection.RemoteIpAddress = …)`** wrapped in an HttpClient (`AsRemote`/`AsLan`/`AsEdge`
+  in AuthTests.cs) — `RequestBuilder.And` only reaches `HttpRequestMessage`, not
+  `HttpContext`. Read response bodies eagerly inside the helper: the in-memory response stream
+  closes when the request scope ends, and a later `ReadFromJsonAsync` races it
+  (`ObjectDisposedException`).
+- The auth fixtures (`AuthFixture`, `AuthExternalFixture`) run with `StartWatchers = false` and
+  never register repositories or hook a real `cwd` — watcher-heavy hosts pushed the full-suite
+  parallel run over the 128-instance inotify budget (lessons.md). Keep new auth-surface tests
+  on that pattern; the durable budget fix is still open.
+- A full-suite run needs the live hub stopped (`systemctl --user stop agent-hq`) or its ~15
+  inotify instances push watcher-heavy classes (Exchange, MultiFilePlan) into contention
+  failures — re-run failed classes alone per lessons.md, and restart the hub after.

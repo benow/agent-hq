@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using AgentHQ.Api.Auth;
 using AgentHQ.Core.Plans;
 using AgentHQ.Infrastructure.Events;
 using AgentHQ.Infrastructure.Services;
@@ -86,12 +87,18 @@ public static class AgentHqTools
         };
     }
 
-    [McpServerTool, Description("Manual/fallback status transition; same lifecycle rules as /plan commands. Resolves the calling session by newest-active-in-repository when sessionId is omitted. Recorded with actor 'openclaw'.")]
+    [McpServerTool, Description("Manual/fallback status transition; same lifecycle rules as /plan commands. Resolves the calling session by newest-active-in-repository when sessionId is omitted. Actor: your authenticated identity when you hold one (an agent-role bearer token), else 'openclaw'.")]
     public static async Task<object> UpdatePlanStatus(string planId, string status, string sessionId,
-        string by, string note, IPlanStore store, PlanService svc, ISessionStore sessions)
+        string by, string note, IPlanStore store, PlanService svc, ISessionStore sessions,
+        Microsoft.AspNetCore.Http.IHttpContextAccessor accessor)
     {
         var actorSession = string.IsNullOrWhiteSpace(sessionId) ? null : sessionId;
-        by = string.IsNullOrWhiteSpace(by) ? "openclaw" : by;
+        // Attribution parity with sessions: an MCP call by an authenticated identity (Linda)
+        // records that identity as the actor. Loopback callers keep the 'openclaw' convention.
+        var principal = accessor.HttpContext?.GetPrincipal();
+        by = string.IsNullOrWhiteSpace(by)
+            ? principal is { FromLoopback: false, Username: var name } && !string.IsNullOrEmpty(name) ? name : "openclaw"
+            : by;
         note = string.IsNullOrWhiteSpace(note) ? null! : note;
         var plan = await store.GetAsync(planId);
         if (plan is null) return new { error = "not found" };

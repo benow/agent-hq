@@ -35,9 +35,27 @@ public sealed class AgentHqDb : IAgentHqConnectionFactory
 
     public void Migrate(string? startupLogPath = null)
     {
+        // Only the SQLite Migrations scripts: the assembly also embeds the hub's Migrations.Pg
+        // set, and running PostgreSQL DDL against SQLite would half-apply (the Pg loader
+        // filters symmetrically; before part 2 the two sets only avoided colliding by sharing
+        // the "0001_Initial.sql" journal name). Script names stay the full resource names —
+        // that is what the deployed journals hold.
+        var assembly = Assembly.GetExecutingAssembly();
+        var scripts = assembly.GetManifestResourceNames()
+            .Where(n => n.Contains(".Migrations.", StringComparison.Ordinal)
+                        && !n.Contains(".Migrations.Pg.", StringComparison.Ordinal))
+            .OrderBy(n => n, StringComparer.Ordinal)
+            .Select(n =>
+            {
+                using var stream = assembly.GetManifestResourceStream(n)!;
+                using var reader = new StreamReader(stream);
+                return new DbUp.Engine.SqlScript(n, reader.ReadToEnd());
+            })
+            .ToList();
+
         var up = DeployChanges.To
             .SqliteDatabase(_connectionString)
-            .WithScriptsEmbeddedInAssembly(Assembly.GetExecutingAssembly())
+            .WithScripts(scripts)
             // Cold-start noise: DbUp's per-script console lines go to the startup log file
             // ($AGENTHQ_DATA/logs) instead of stdout/journal, where they buried real warnings.
             .LogTo(startupLogPath is null
