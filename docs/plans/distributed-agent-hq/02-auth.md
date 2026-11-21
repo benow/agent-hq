@@ -164,3 +164,24 @@ an explicit external access point at the existing edge.
     still open. (f) `AGENTHQ_ADMIN_USER/PASSWORD` and `AGENTHQ_EDGE_TOKEN` reach the host
     through `AgentHqOptions` (Program reads env once) — tests pass them via options, never
     process env.
+
+- 2026-11-21 — DEPLOYED AND EXPOSED (main cbfa281, image agent-hq:cbfa281 lineage via CI).
+  The exposure decision Andy approved this session: the dashboard goes LAN-only, permanently
+  (the recorded posture — UI never goes through the external point).
+  - Auth commit 8432e90 + compose AGENTHQ_BIND/AGENTHQ_URL (c957a17) shipped through CI; the
+    runner container on builds was recreated (its dead ACCESS_TOKEN PAT removed from
+    runner.env; registration now via RUNNER_TOKEN) — that recreation is why the first two
+    CI runs deployed with loopback still published.
+  - Verified against the live hub at http://192.168.0.178:5317: anonymous `/` and
+    `/overview` → 401; `POST /auth/login` (token grant) → admin bearer; wrong password → 401;
+    `POST /plans` with the bearer → plan created; the dashboard loaded in a real browser via
+    the cookie grant and received the new plan over SSE (seq advanced, activity badge, row
+    appeared) — criterion 2 end-to-end on the deployed hub, not just the test host.
+  - Bootstrap: `AGENTHQ_ADMIN_USER=andy` / password generated per-start env (in
+    builds `runner.env` + `~/apps/agent-hq/.env`), `AGENTHQ_EDGE_TOKEN` set for the later
+    external point; `AGENTHQ_BIND=192.168.0.178` (the LAN address, never 0.0.0.0).
+  - Found while verifying: the web UI's submit-plan and register-repo handlers were never
+    wired (defined, unused) — dialogs silently did nothing. Fixed cbfa281 and pinned by
+    `AppJsWiresEverySubmitHandler`.
+  - Outstanding: criterion 4 headless-MCP transcript from the deployed hub (test-host one
+    exists), criterion 5/6 external point + Linda V1 probe (edge token now provisioned).
