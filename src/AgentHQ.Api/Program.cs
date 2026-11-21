@@ -340,7 +340,14 @@ public static class AgentHqHost
 
         // Web UI: plain static files, no build step (wwwroot/). Falls through to the API routes.
         app.UseDefaultFiles();
-        app.UseStaticFiles();
+        app.UseStaticFiles(new StaticFileOptions
+        {
+            // no-cache (revalidate via ETag every time): a browser must never keep a stale
+            // app.js across deploys — heuristic caching served the pre-fix UI for minutes
+            // after the wiring fix shipped (found during the 2026-11-21 LAN verification).
+            OnPrepareResponse = ctx =>
+                ctx.Context.Response.Headers.CacheControl = "no-cache"
+        });
         return app;
     }
 }
