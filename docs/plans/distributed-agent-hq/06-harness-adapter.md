@@ -39,6 +39,15 @@ Dead or dangerous (recorded lessons — they bind this part):
 - **Plugin package**: one ZCode plugin containing the `/plan:*` command pack, the hook
   script, and (behind the spoke) the injection flow. Installed from the local marketplace
   path or a repo checkout; versioned with the hub/spoke releases.
+- **Installed at USER level, by the `agent-hq` tool** (2026-11-22 amendment, Andy's
+  decision): the plugin is the artifact, but the installer is the spoke's own
+  `agent-hq install` (a `dotnet tool` from nuget.benow.ca — part 8), which drops the
+  plugin and writes the hook/MCP config into **`~/.zcode/cli/config.json`** (the verified
+  user-level location), never `<repo>/.zcode/config.json` and never `settings.json`. One
+  install serves every repository on the machine; per-repo participation is decided by
+  hub-side registration (part 8's auto-register-on-`/plan`), so a repo tree is never
+  modified and a second machine needs no repo-side setup. The marketplace path above
+  remains the manual fallback, not the primary.
 - **The hook script** (carried from the superseded phase-3 design, retargeted at the spoke):
   `~/.zcode/hooks/agent-hq-hook.sh` under plugin control — mode 0700, marker line, reads
   stdin once, extracts session id / cwd / prompt / event with `jq`, builds the POST body
@@ -115,3 +124,11 @@ Dead or dangerous (recorded lessons — they bind this part):
   settings.json dead, matcher poison, client-log authority) and the superseded phase-3
   design, retargeted from "hub on localhost" to "spoke on localhost" — the hook's world
   does not change shape, only whom it talks to.
+
+- 2026-11-22 — AMENDED in the design session with Andy: the plugin stays the artifact but
+  the **`agent-hq` dotnet tool is the installer**, and everything lands at user level
+  (`~/.zcode/cli/config.json`) — never per-repo, never `settings.json`. Rationale: the
+  per-repo hook install would re-create the "configured on Andy's machine, not Bob's"
+  drift for every clone, and the tool install is what makes part 8's one-command
+  onboarding possible. The hook's own behaviour is unchanged (loopback spoke, `|| true`
+  floor) plus the part 4 lazy-gate semantics.

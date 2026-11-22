@@ -37,6 +37,15 @@ an explicit external access point at the existing edge.
 - **Bootstrap**: first start with `AGENTHQ_ADMIN_USER`/`AGENTHQ_ADMIN_PASSWORD` set creates
   the admin identity (idempotent; warns and ignores on later starts). Further identities
   via an admin-only endpoint. Credentials live in Postgres (part 1's store).
+  **2026-11-22 amendment (Andy's call): for interactive installs the env-var bootstrap is
+  superseded by a setup-code wizard** — a fresh start with no identities generates a
+  one-time setup code (logged, and printed by `agent-hq init`), the first web visit shows
+  an initialize wizard demanding that code, and the admin identity is created *in the
+  browser* with a password the human chose. The initial password then never lives in an
+  env file, a shell history, or a chat transcript (the builds deploy of 2026-11-21 parked
+  a generated cleartext password in two env files — exactly the wart this removes; the
+  env path remains only for headless/CI installs). Single-use code, burned on completion,
+  invalid once any identity exists.
 - **Perimeter rule**: requests arriving on loopback are trusted and skip auth — the hook,
   local curl, the in-memory test host. Everything else (LAN bind, external point) requires
   a valid token/cookie on **every** route: REST, SSE, MCP, static UI. No anonymous
@@ -185,3 +194,11 @@ an explicit external access point at the existing edge.
     `AppJsWiresEverySubmitHandler`.
   - Outstanding: criterion 4 headless-MCP transcript from the deployed hub (test-host one
     exists), criterion 5/6 external point + Linda V1 probe (edge token now provisioned).
+
+- 2026-11-22 — DESIGN AMENDMENT (Andy's call, NASTV integration day): the setup-code
+  wizard supersedes the env-var bootstrap for interactive installs — fresh start with no
+  identities → one-time setup code in the log → wizard sets the admin identity in the
+  browser. Motivating evidence: the 2026-11-21 deploy parked a generated cleartext admin
+  password in builds env files (and it crossed the LAN over plain HTTP once). The env
+  bootstrap stays for headless/CI hosts only. Implementation belongs with part 8's
+  onboarding work (wizard page + `POST /setup/complete` + one-time code generation).

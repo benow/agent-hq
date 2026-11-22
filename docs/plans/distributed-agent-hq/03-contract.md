@@ -38,14 +38,28 @@ this part's gate — the publish pipeline and criterion 1 name the feed explicit
 | Route | Direction | Purpose |
 |---|---|---|
 | `POST /workers/register` | spoke → hub | `{name, machine, version, capabilities[]}` → `{workerId, serverTime, contractVersion}` — capabilities are typed (rule 7) |
-| `POST /workers/{id}/heartbeat` | spoke → hub | presence; → `{lastAcceptedSeq, commandsPending}` |
+| `POST /workers/{id}/heartbeat` | spoke → hub | presence; → `{lastAcceptedSeq, commandsPending, serverVersion, contractVersion}` — the version fields are the self-update signal (rule 9) |
 | `POST /workers/{id}/snapshot` | spoke → hub | full state (below); hub replaces its projections for that worker |
 | `POST /workers/{id}/events` | spoke → hub | ordered batch of deltas; → `{accepted, globalSeqFrom, nextExpected}` |
-| `GET /workers/{id}/commands?wait=25` | hub → spoke | long-poll claim of queued envelopes (lease) |
+| `GET /events` (SSE, worker token) | hub → spoke | the **down-signal stream** (rule 8): `commands.pending`, `release.available` — spoke-initiated, `Last-Event-ID` replay over the global `seq` space |
+| `GET /workers/{id}/commands?wait=25` | hub → spoke | long-poll claim of queued envelopes (lease); **fallback channel** — used only when the SSE stream is down |
 | `POST /workers/{id}/commands/{commandId}/result` | spoke → hub | outcome of one command (idempotent by commandId) |
+| `POST /workers/pairing` | tool → hub | unauthenticated, rate-limited: create a short-TTL pairing nonce → `{nonce, pairUrl, expiresAt}` (part 8's device flow) |
+| `POST /workers/pairing/{nonce}/approve` | browser → hub | admin cookie: attach a fresh `worker`-role token to the nonce; single-approve, then burn |
+| `GET /workers/pairing/{nonce}` | tool → hub | poll until approved → `{token}` once, `{state}` until then; TTL 5 min |
 | `POST /ci/events` | CI → hub | the `notify-agent-hq` payload, one model in the package; the build spoke (part 5) serves the same ingest on its own loopback for co-located runners |
 
 Rules that are the contract:
+
+0. **The down-signal is SSE; the long-poll is the fallback.** The spoke opens one
+   `GET /events` stream (client-initiated — the no-inbound-port property is preserved) and
+   reacts to `commands.pending` by claiming immediately and to `release.available` by
+   starting its self-update (part 4). The stream carries the hub's global `seq` as SSE ids,
+   so `Last-Event-ID` gives reconnect replay for free. SSE is not the lease: envelopes are
+   still claimed through the leased route — the stream only says "come now", which makes
+   the claim loop reactive instead of periodic. When the stream is down, the spoke resumes
+   the long-poll claim loop (`wait=25`) and retries SSE with backoff. Role policy: the
+   `worker` role gains read on `/events` (the stream only; nothing else changes).
 
 1. **Actor passthrough.** Every event and command envelope carries `actor` (the original
    session id, an identity like `linda-v2` / `andy`, or a CI run like
@@ -77,6 +91,21 @@ Rules that are the contract:
    presence by capability and routes commands by repository ownership (a plan command goes
    to the `plan-engine` holder) or by kind (a `health.check` to a `build-health` holder).
    One spoke may hold several kinds; capabilities are additive.
+8. **Heartbeats are slow; presence is patient.** The spoke heartbeats every **300 s**
+   (SSE makes frequent heartbeats pointless — they exist for presence and version
+   negotiation only). A worker renders offline when no heartbeat has arrived for
+   **900 s** (three missed beats); the old 600 s rule is superseded.
+9. **Self-update is hub-signaled, spoke-pulled.** The heartbeat response carries
+   `serverVersion`; a spoke that sees a different version than its own treats it as an
+   update request (download, health-check, cutover, rollback on failure — part 4 owns the
+   mechanics; the contract only carries the signal). The hub never writes to machines.
+   The same signal also fans out as `release.available` on the SSE stream for immediacy.
+10. **Pairing nonces are the credential bootstrap.** `POST /workers/pairing` is
+    unauthenticated but rate-limited (login backoff rules) and creates a nonce with a
+    5-minute TTL — it carries no capability beyond being approved. Approval requires an
+    admin session (the browser); the attached token is delivered exactly once on the poll
+    and never stored in clear anywhere but the spoke's own config file. No worker token is
+    ever typed by a human or shown to an LLM.
 
 ## The package
 
@@ -102,11 +131,19 @@ Rules that are the contract:
 - [ ] Contract models + routes table above, versioned header, error taxonomy.
 - [ ] Hub side: workers/queue/projections tables (Postgres, `Migrations.Pg`), the ingest
       services, re-sequencing into the existing event stream, snapshot application.
+- [ ] SSE down-signal for spokes: `worker`-token auth on the `/events` stream,
+      `commands.pending` / `release.available` fan-out from `SseHub`, `Last-Event-ID`
+      replay via the global seq; `worker` role policy gains `/events` read.
+- [ ] Pairing endpoints (request/approve/poll) with nonce TTL, single delivery, rate
+      limit; dashboard "Spokes" page with the approve action (part 8's flow).
+- [ ] Heartbeat response gains `serverVersion`/`contractVersion`; presence threshold
+      moves to the 900 s rule.
 - [ ] CI ingest endpoint + payload shapes (shared versioning home; nastv implements the
       sender side under its builds-stack plan 4).
 - [ ] `AgentHQ.Client` + conformance kit; pack/push pipeline; `nuget.config`.
 - [ ] Conformance + E2E: the in-memory hub runs the kit; an E2E actor plays a fake spoke
-      (register → snapshot → events → command claim → result), including kill-mid-drain.
+      (register → snapshot → events → SSE-signal → command claim → result), including
+      kill-mid-drain and the SSE-down → long-poll-fallback transition.
 - [ ] Docs: `docs/features/distributed.md` (new page: contract, flows, degradation), the
       package's README, link from `docs/README.md`.
 
@@ -126,6 +163,14 @@ Rules that are the contract:
 6. Actor passthrough: a history row written via a forwarded command names the original
    session id, `transportedBy` names the worker — spot-check query recorded as evidence.
 7. Contract mismatch: a v2-headed request against a v1 hub → 400 naming both versions.
+8. SSE signal: an enqueued command reaches an SSE-connected spoke's claim within ~1 s
+   (the E2E timestamps prove it); dropping the stream makes the same spoke claim through
+   the long-poll fallback with no command lost; reconnect with `Last-Event-ID` replays
+   nothing already seen.
+9. Pairing: an unauthenticated nonce request → browser approval with an admin session →
+   the poll delivers a working `worker` token exactly once; a second poll of the same
+   nonce gets `state`; an unapproved nonce expires at TTL; the approve route without an
+   admin session → 401.
 
 ## Documentation
 
@@ -139,3 +184,16 @@ Rules that are the contract:
 - 2026-11-15 — drafted. The reject-and-resend ordering rule (no server-side gap buffering)
   chosen over the alternative for simplicity — resend from cursor is bounded by the outbox
   and needs no hub-side reorder logic.
+
+- 2026-11-22 — AMENDED in the design session with Andy (NASTV integration day). (a) The
+  hub→spoke down-signal is **SSE-first** (rules 0, route table): Andy's call, overriding the
+  draft's long-poll-only transport — SSE with `Last-Event-ID` replay is elegant, the hub
+  already runs `SseHub` over the global seq space, and the long-poll demotes to the
+  SSE-down fallback. Commands keep the leased claim route regardless. (b) Heartbeats
+  lengthened to 300 s with the 900 s presence rule (rule 8) — with SSE carrying the
+  immediacy, heartbeats are presence+version only. (c) Self-update signal (rule 9):
+  `serverVersion`/`contractVersion` on the heartbeat response, spoke pulls — the hub never
+  writes to machines. (d) Pairing nonces (rule 10 + routes): the credential bootstrap for
+  spokes is a browser-approved device flow — no token is ever typed by a human or seen by
+  an LLM (recorded after Andy flagged that credentials through an LLM session are bad
+  practice). The `worker` role gains `/events` read; nothing else in the role table moves.

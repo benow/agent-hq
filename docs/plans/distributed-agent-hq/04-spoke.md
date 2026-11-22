@@ -39,12 +39,24 @@ commands. Without the variable it is exactly today's hub — which is the rollba
   reconcile below). Drain in `originSeq` order, batched, against the contract's
   idempotence key; on reject-with-`nextExpected`, rewind to that cursor.
 - **Registration + snapshot**: on start (and when the hub says it has no state for this
-  worker — the rebuild case), register, then send the bulk snapshot. Heartbeat every 30 s;
-  the hub's presence rule (offline after 600 s) renders spokes in the UI's presence strip.
-- **Commands**: a long-poll claim loop (the contract's lease). Executed locally through
-  `PlanService` — the same one path — with the envelope's `actor` as attribution. Result
-  posted back; the resulting local events replicate upward like any others, so the UI's
-  outcome arrives via the normal stream.
+  worker — the rebuild case), register, then send the bulk snapshot. Heartbeat every
+  **300 s** (contract rule 8; the hub renders offline after 900 s — three missed beats).
+- **The down-link is SSE-first** (contract rule 0): one `GET /events` stream with the
+  worker token; `commands.pending` triggers an immediate claim, `release.available`
+  triggers the self-update check below. `Last-Event-ID` reconnect replays from the global
+  cursor. While the stream is healthy there is **no polling at all**; when it drops, the
+  spoke resumes the long-poll claim loop (`wait=25`) and retries SSE with backoff.
+- **Commands**: claimed through the leased route (SSE only makes it reactive). Executed
+  locally through `PlanService` — the same one path — with the envelope's `actor` as
+  attribution. Result posted back; the resulting local events replicate upward like any
+  others, so the UI's outcome arrives via the normal stream.
+- **Self-update** (contract rule 9): on `release.available` (or a heartbeat
+  `serverVersion` mismatch), download the release into a releases directory next to the
+  install, health-check it (starts, passes its own `/health`, contract version accepted),
+  flip the `current` symlink, restart the unit via systemd, verify health; on any failure
+  flip back, restart the previous release, and record an `update.rolled_back` event to the
+  hub. The deploy script's release discipline ("a rolled-back deploy is not a deploy")
+  applies verbatim to the spoke's own updates.
 - **Injection proxy**: when part 6's digest/injection asks the spoke, the spoke answers
   from local state where it can (plan status) and proxies the hub-owned part (exchange
   inbox) with a short timeout and a cached last-good fallback — never blocking, never
@@ -53,10 +65,20 @@ commands. Without the variable it is exactly today's hub — which is the rollba
   - hub down → `/plan` applies locally; outbox grows; heartbeat retries with backoff;
     nothing errors into the hook path (`|| true` floor kept).
   - hub up, laptop was offline → ordered drain, no loss, no duplication.
+  - SSE drops, hub up → claim falls back to long-poll mid-flight; no command lost;
+    stream reconnects with replay and polling stops again.
+  - bad update → health-check fails → previous release restored, `update.rolled_back`
+    visible at the hub; the spoke's version now matches the hub's last-known-good.
   - ZCode down → spoke idles; presence stays honest via heartbeat.
   - hub wiped → registration + snapshot rebuild it (the overview's criterion 8).
 - **Startup reconcile**: on boot, compare local cursor vs hub `lastAcceptedSeq`; snapshot
   if the hub is empty, drain otherwise. Never assume.
+- **The lazy `/plan` gate** (the harness's only network knowledge is loopback — part 6):
+  spoke absent on loopback → the hook/command short-circuits and emits the install
+  guidance line, once per session, and posts nothing; spoke present but the hub is
+  unreachable → the hook still succeeds (it only saw loopback) and the spoke surfaces
+  the outage via its own presence, not by failing prompting. Configured-but-unreachable
+  is **visible**, never silent (Andy's rule: system stability errors must show).
 
 ## What spoke mode turns off
 
@@ -71,9 +93,12 @@ directly. Rollback (hub mode) restores everything, unchanged.
       host exercises both modes.
 - [ ] Outbox table (SQLite migration), event-append hook, startup reconcile, drain loop
       with backoff, cursor persistence.
-- [ ] Registration/heartbeat/snapshot/command loop on `AgentHQ.Client`; presence surfaced
+- [ ] Registration/heartbeat (300 s)/snapshot loop on `AgentHQ.Client`; SSE-first
+      down-link with long-poll fallback and `Last-Event-ID` reconnect; presence surfaced
       to the hub UI.
 - [ ] Command execution path with actor passthrough; idempotence for redelivered commands.
+- [ ] Self-update: releases directory, health-check, `current` symlink flip, systemd
+      restart, rollback + `update.rolled_back` event; the degradation-matrix row tested.
 - [ ] Injection proxy (skeleton now; part 6 builds the digest on it).
 - [ ] Laptop unit rename to `agent-hq-spoke.service` (deploy script laptop mode; legacy
       refusal logic updated per the naming rules).
@@ -98,11 +123,21 @@ directly. Rollback (hub mode) restores everything, unchanged.
    command after a simulated crash does not double-apply.
 4. Snapshot rebuild: a fresh hub + existing spoke → registrations + snapshot reproduce the
    plan table, history and sessions identical to the spoke's local reads.
-5. Presence: killing the spoke flips the hub UI to offline after the 600 s rule; restart
-   flips it back.
+5. Presence: killing the spoke flips the hub UI to offline after the 900 s rule
+   (three missed 300 s beats); restart flips it back.
 6. Mode symmetry: the same binary in hub mode passes today's full suite unchanged
    (rollback credibility, not just prose).
 7. The E2E simulation with the spoke actor is green in CI.
+8. SSE-first transport: with the stream healthy, a hub-originated command executes on the
+   spoke within ~1 s of enqueue (E2E timestamps); killing the stream mid-flight loses no
+   command and the fallback long-poll claims it; reconnect replays nothing seen.
+9. Self-update: a simulated new release installs via symlink flip and restart; a release
+   that fails its health-check is rolled back to the previous release with an
+   `update.rolled_back` event visible at the hub; the spoke's service ends healthy in
+   both cases.
+10. Lazy gate: with no spoke on loopback, a `/plan` command emits the install guidance
+    and writes nothing anywhere; with the spoke up and the hub stopped, prompting is
+    never blocked and the outage is visible on the spoke's presence, not in the hook.
 
 ## Documentation
 
@@ -115,3 +150,15 @@ directly. Rollback (hub mode) restores everything, unchanged.
 - 2026-11-15 — drafted. The same-binary mode switch (vs a separate spoke project) chosen so
   the E2E exercises the real composition and rollback is a restart — the alternative bought
   a second host to keep in sync and nothing else.
+
+- 2026-11-22 — AMENDED in the design session with Andy. Transport moved to **SSE-first**
+  (his call, matching the 03 amendment) with the long-poll demoted to the SSE-down
+  fallback; heartbeats 300 s against the 900 s presence rule. Added the **self-update
+  loop** — hub-signaled via heartbeat `serverVersion` / `release.available`, spoke pulls,
+  health-check + symlink flip + restart, rollback reports `update.rolled_back` — reusing
+  the deploy script's release discipline rather than inventing an updater. Added the
+  **lazy `/plan` gate** semantics: unconfigured machine → guidance emit, nothing posted;
+  configured-but-unreachable hub → prompting never blocked but the outage is *visible*
+  (Andy: stability errors must not be silent). No repository-tree configuration exists in
+  this design — participation is hub-side registration plus the machine-level spoke,
+  settled in the same session.

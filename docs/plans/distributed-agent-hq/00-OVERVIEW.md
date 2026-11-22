@@ -107,6 +107,7 @@ topology; it is the rollback.
 | 5 — Build spoke (build integration) | [05-build-spoke.md](05-build-spoke.md) | CI events flow via the spoke; health + runs visible at the hub | 4 (spoke host, not its ZCode module) |
 | 6 — Harness adapter (ZCode-side delivery) | [06-harness-adapter.md](06-harness-adapter.md) | plugin install; hook→spoke; injection round trip | 4 + merge prereq |
 | 7 — Cutover | [07-cutover.md](07-cutover.md) | program criteria below, incl. both Linda probes | all |
+| 8 — Install & onboarding | [08-install-onboarding.md](08-install-onboarding.md) | fresh machine → install → pair → `/plan start` → visible at the hub | 2, 3, 4, 6 |
 
 **Gate rule:** a part is done when its own Verification Criteria pass, verified in a
 *different session* than the one that implemented it (the repository's separation-of-duties
