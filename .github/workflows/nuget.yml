@@ -1,0 +1,48 @@
+name: nuget
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: nuget
+  cancel-in-progress: false
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  pack-and-push:
+    # The private feed is nastv's BaGetter on benow.ca (nuget.benow.ca); pulls are anonymous,
+    # pushes use the repo secret BENOW_NUGET_API_KEY (the BaGetter global API key, set
+    # 2026-11-16). The secret is referenced only here — never in nuget.config or the repo.
+    runs-on: ${{ fromJSON(vars.RUNNER_LABELS || '["self-hosted","agent-hq"]') }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      # Version rule (plan 03 "Publishing"): the client csproj's <Version> is the source of
+      # truth. A v1.2.3 tag publishes 1.2.3 stable; a CI build without a tag publishes
+      # X.Y.Z-build.{run_number} prereleases; local dev packs -dev (no CI suffix).
+      - name: set version
+        run: |
+          VERSION=$(grep -oP '(?<=<Version>)[^<]+' src/AgentHQ.Client/AgentHQ.Client.csproj)
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            TAG="${GITHUB_REF_NAME#v}"
+            if [[ "$TAG" != "$VERSION" ]]; then
+              echo "::error::tag ${GITHUB_REF_NAME} does not match csproj <Version> ${VERSION}"
+              exit 1
+            fi
+            SUFFIX=""
+          else
+            SUFFIX="build.${{ github.run_number }}"
+          fi
+          echo "VERSION=${VERSION}${SUFFIX:+-$SUFFIX}" >> "$GITHUB_ENV"
+      - run: dotnet pack src/AgentHQ.Client/AgentHQ.Client.csproj -c Release -o /tmp/nuget-out /p:Version=${{ env.VERSION }}
+      - run: dotnet pack src/AgentHQ.Client.Conformance/AgentHQ.Client.Conformance.csproj -c Release -o /tmp/nuget-out /p:Version=${{ env.VERSION }}
+      - run: dotnet nuget push "/tmp/nuget-out/*.nupkg" --source https://nuget.benow.ca/v3/index.json --api-key "$BENOW_NUGET_API_KEY" --skip-duplicate
+        env:
+          BENOW_NUGET_API_KEY: ${{ secrets.BENOW_NUGET_API_KEY }}

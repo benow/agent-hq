@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- The contract version IS the package version (plan 03 rule 6). A v1.2.3 tag
+         publishes 1.2.3 stable; CI builds publish X.Y.Z-build.{run} prereleases; local
+         dev packs -dev. Publish pipeline: .github/workflows/nuget.yml. -->
+    <Version>1.0.0</Version>
+    <PackageId>AgentHQ.Client</PackageId>
+    <Description>Agent HQ hub-and-spoke wire contract: DTOs and the typed client (v1). The hub implements it; any spoke consumes it. References nothing else.</Description>
+    <Authors>benow</Authors>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+
+</Project>

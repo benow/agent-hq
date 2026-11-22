@@ -55,3 +55,13 @@ or a route means updating that test deliberately, not by loosening it.
 When verifying a UI change by hand, use the browser: navigate, take a snapshot **and** a screenshot,
 read the console for errors, and investigate any non-2xx response. A DOM snapshot alone will not
 show overflow, clipping or stray gaps.
+
+## Spokes dialog (part 3, distributed)
+
+`index.html` + `app.js` add the Spokes dialog: presence rendering from `GET /workers`
+(id, name/machine/version, online, capabilities[].kind, repositories) and the pairing
+approval (`POST /workers/pairing` create, `POST /workers/pairing/{nonce}/approve` approve).
+**Both pairing calls send `X-AgentHQ-Contract: 1`** (`contractHeaders()` in app.js) — the
+contract middleware gates the whole `/workers/` group, browsers included. `WebUiContractTests`
+pins the approve route string, the header, the handler wirings and every field the dialog
+reads; changing either side means changing that test deliberately.

@@ -186,6 +186,8 @@ public static class AgentHqHost
                 sp.GetRequiredService<AgentHqPgDb>()));
             builder.Services.AddSingleton<IIdentityStore>(sp => new Infrastructure.PgStores.IdentityStorePg(
                 sp.GetRequiredService<AgentHqPgDb>()));
+            builder.Services.AddSingleton<IWorkerStore>(sp => new Infrastructure.PgStores.WorkerStorePg(
+                sp.GetRequiredService<AgentHqPgDb>()));
         }
         else
         {
@@ -200,6 +202,7 @@ public static class AgentHqHost
             builder.Services.AddSingleton<IPlanStore>(sp => new PlanStore(sp.GetRequiredService<AgentHqDb>()));
             builder.Services.AddSingleton<IExchangeStore>(sp => new ExchangeStore(sp.GetRequiredService<AgentHqDb>()));
             builder.Services.AddSingleton<IIdentityStore>(sp => new IdentityStore(sp.GetRequiredService<AgentHqDb>()));
+            builder.Services.AddSingleton<IWorkerStore>(sp => new WorkerStore(sp.GetRequiredService<AgentHqDb>()));
         }
         // Exchange configuration is resolved once here, from the environment and the data dir —
         // services never read environment variables themselves (one composition root).
@@ -223,6 +226,24 @@ public static class AgentHqHost
         builder.Services.AddSingleton(sp => new IdentityService(
             sp.GetRequiredService<IIdentityStore>(),
             logger.ForContext("Subsystem", "auth")));
+        // Workers (part 3, distributed): registration/presence/replication services, the
+        // command queue and pairing. REST, MCP and the spoke routes sit on the same services.
+        builder.Services.AddSingleton(sp => new WorkerService(
+            sp.GetRequiredService<IWorkerStore>(),
+            sp.GetRequiredService<IEventStore>(),
+            logger.ForContext("Subsystem", "workers")));
+        builder.Services.AddSingleton(sp => new CommandQueueService(
+            sp.GetRequiredService<IWorkerStore>(),
+            sp.GetRequiredService<IEventStore>(),
+            logger.ForContext("Subsystem", "workers")));
+        builder.Services.AddSingleton(sp => new PairingService(
+            sp.GetRequiredService<IWorkerStore>(),
+            sp.GetRequiredService<IIdentityStore>(),
+            sp.GetRequiredService<WorkerService>(),
+            logger.ForContext("Subsystem", "workers")));
+        builder.Services.AddSingleton(sp => new CiIngestService(
+            sp.GetRequiredService<IEventStore>(),
+            logger.ForContext("Subsystem", "events")));
         // MCP tool attribution: a tool call carries the authenticated identity as its actor
         // (parity with sessions); the accessor is how the tool façade reads the request.
         builder.Services.AddHttpContextAccessor();
@@ -258,6 +279,9 @@ public static class AgentHqHost
         // The perimeter middleware runs first so every route — REST, SSE, MCP, static UI,
         // static everything — is behind it (loopback trusted, tokens elsewhere, edge 404s).
         app.UseAuth(options.EdgeToken);
+        // Then the v1 wire-contract header gate for /workers/ + /ci/ (part 3): bad credentials
+        // answer 401 before a header mismatch answers 400.
+        app.UseContractHeader();
 
         var provider = app.Services.GetRequiredService<IAgentProvider>();
         var sync = app.Services.GetRequiredService<SessionSyncService>();
@@ -276,6 +300,18 @@ public static class AgentHqHost
         // First-start admin bootstrap: idempotent by username; later starts warn and ignore.
         await app.Services.GetRequiredService<IdentityService>()
             .BootstrapAdminAsync(options.AdminUser, options.AdminPassword);
+        // release.available fan-out (part 3, rule 9): at hub deploy/start, when the hub's own
+        // version changed since last run, one event goes out on the global stream. Spokes
+        // compare versions themselves — a redundant signal is a no-op.
+        var releaseWorkers = app.Services.GetRequiredService<WorkerService>();
+        var workerStore = app.Services.GetRequiredService<IWorkerStore>();
+        var hubVersion = WorkerService.HubVersion;
+        if (await workerStore.GetStateAsync("release.version") is { } lastRelease
+            && lastRelease != hubVersion)
+        {
+            await events.AppendAsync("release.available", new { version = hubVersion });
+        }
+        await workerStore.SetStateAsync("release.version", hubVersion);
         foreach (var repo in await repos.ListAsync())
         {
             plans.StartWatcher(repo);
@@ -334,6 +370,7 @@ public static class AgentHqHost
         app.MapPlans();
         app.MapExchange();
         app.MapEvents();
+        app.MapWorkers();
         app.MapPost("/hooks/zcode/prompts", HookFeedService.HandleAsync);
         app.MapAuth();
         app.MapMcp("/mcp");

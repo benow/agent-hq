@@ -25,6 +25,7 @@ point at the page that owns a topic.
 | [Web UI](features/web-ui.md) | The table, filters, fly-out, activity panel, constraints | You are using or changing the browser interface |
 | [API reference](features/api.md) | Every REST endpoint with parameters, plus the data shapes they return | You are writing a client |
 | [The ZCode integration](features/zcode-integration.md) | The `/plan` command pack, the prompt hook, the installer, and what it writes into your home directory | You are setting up or debugging the worker-agent side |
+| [Hub and spokes](features/distributed.md) | The v1 wire contract, the `AgentHQ.Client` package, ordering/idempotence rules, snapshots, the command queue, pairing, CI ingest | You are building a spoke, integrating with the hub API, or changing the contract |
 
 ## Design record
 

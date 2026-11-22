@@ -8,8 +8,9 @@
             {
               "type": "command",
               "command": "bash \"${ZCODE_PROJECT_DIR}/scripts/agent-hq-prompt-hook.sh\"",
-              "timeout": 10,
-              "statusMessage": "recording prompt with Agent HQ"
+              "enabled": true,
+              "statusMessage": "recording prompt with Agent HQ",
+              "timeout": 10
             }
           ]
         }

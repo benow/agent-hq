@@ -128,7 +128,8 @@ Adding a new surface means adding it in all four spellings above, consistently.
   (`AGENTHQ_ZCODE_DB`); a misconfigured or test host must degrade to "no sessions", never mirror
   live work.
 - **REST and MCP stay in sync by construction.** MCP tools are thin wrappers over the same
-  services the REST endpoints use. If a tool needs logic, the logic goes into the service.
+  services the REST endpoints use — and the spoke routes (part 3 of the distributed plan) sit
+  on the same services. If a tool needs logic, the logic goes into the service.
 - **Content root is the application directory.** `wwwroot/` and `Commands/` are served from
   `AppContext.BaseDirectory`, so behaviour is identical under `dotnet run`, systemd and the test
   host. Do not resolve either from the working directory.

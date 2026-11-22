@@ -44,6 +44,8 @@ const state = {
   pollTimer: null,
   conn: "idle",
   tab: "content",
+  workers: [],
+  pairingNonce: null,
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -791,6 +793,65 @@ async function registerRepo(event) {
     toast(e.message, "error");
   }
 }
+
+// ---------- spokes (part 3: presence + the pairing approval) ----------
+
+async function loadSpokes() {
+  const res = await api("/workers");
+  state.workers = res.workers || [];
+  const list = state.workers;
+  $("#spokes-list").innerHTML = list.length
+    ? list.map((w) => `<li title="${escapeHtml(w.id)}">
+        <span class="st ${w.online ? "online" : "offline"}">${w.online ? "online" : "offline"}</span>
+        <span class="name">${escapeHtml(w.name || "(unregistered)")} · ${escapeHtml(w.machine || "?")} · v${escapeHtml(w.version || "?")}</span>
+        <span class="muted">${escapeHtml((w.capabilities || []).map((c) => c.kind).join(", ") || "no capabilities")}</span>
+        <span class="muted">${escapeHtml((w.repositories || []).join(", "))}</span>
+      </li>`).join("")
+    : `<li class="muted">no spokes paired yet — create a pairing code below</li>`;
+}
+
+// The pairing flow (rule 10): create a nonce here, the spoke's operator enters it on the
+// spoke side, this browser approves with the admin session, the spoke's poll receives the
+// token once. The contract header rides along like every /workers/ call.
+const contractHeaders = () => ({ "X-AgentHQ-Contract": "1" });
+
+async function createPairing() {
+  try {
+    const nonce = await api("/workers/pairing", { method: "POST", headers: contractHeaders() });
+    state.pairingNonce = nonce.nonce;
+    $("#pairing-hint").textContent =
+      `Code ${nonce.nonce} — valid until ${new Date(nonce.expiresAt).toLocaleTimeString()}. Enter it on the spoke, then press Approve.`;
+    await loadSpokes();
+  } catch (e) {
+    toast(e.message, "error");
+  }
+}
+
+async function approvePairing(event) {
+  event.preventDefault();
+  const name = $("#spoke-name").value.trim();
+  const nonce = state.pairingNonce;
+  if (!name || !nonce) return toast("Create a pairing code first and enter the spoke name.", "error");
+  try {
+    await api(`/workers/pairing/${encodeURIComponent(nonce)}/approve`, {
+      method: "POST",
+      headers: contractHeaders(),
+      body: JSON.stringify({ name }),
+    });
+    state.pairingNonce = null;
+    $("#pairing-hint").textContent = "";
+    $("#spoke-name").value = "";
+    toast("Spoke paired.", "ok");
+    await loadSpokes();
+  } catch (e) {
+    toast(e.message, "error");
+  }
+}
+
+$("#btn-spokes").addEventListener("click", () => { void loadSpokes(); $("#spokes-dialog").showModal(); });
+$("#btn-cancel-spokes").addEventListener("click", () => $("#spokes-dialog").close());
+$("#btn-create-pairing").addEventListener("click", createPairing);
+$("#spokes-form").addEventListener("submit", approvePairing);
 
 // ---------- wiring ----------
 

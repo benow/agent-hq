@@ -8,6 +8,7 @@
     <PackageReference Include="Serilog" Version="4.2.0" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="../AgentHQ.Client/AgentHQ.Client.csproj" />
     <ProjectReference Include="../AgentHQ.Core/AgentHQ.Core.csproj" />
     <ProjectReference Include="../AgentHQ.Models/AgentHQ.Models.csproj" />
   </ItemGroup>

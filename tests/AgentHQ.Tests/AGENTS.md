@@ -56,6 +56,7 @@ xUnit, one assembly. `dotnet test` is the gate for every change.
 | `InstallerTests.cs` | Idempotent install into a fake HOME |
 | `LiveSmokeTests.cs` | Read-only checks against the real ZCode db, `AGENTHQ_LIVE=1` only |
 
+
 ## Adding to the E2E simulation
 
 The simulation is the acceptance test: it plays the human, the worker agent and the project
@@ -102,3 +103,11 @@ one of those flows.
 - A full-suite run needs the live hub stopped (`systemctl --user stop agent-hq`) or its ~15
   inotify instances push watcher-heavy classes (Exchange, MultiFilePlan) into contention
   failures — re-run failed classes alone per lessons.md, and restart the hub after.
+
+| `WorkerTests.cs` | The spoke contract (part 3): registration/idempotence, own-id 404, three-case ordering, snapshot + 409 ownership, leased queue + result dedupe, pairing flow + rate limit, contract header gate, role scoping, SSE signal timing, and the conformance kit against the real hub |
+
+- `WorkerFixture` (StartWatchers = false) hosts the spoke-contract tests: the fake spoke is an
+  HttpClient loop and adds no watchers. In a shared fixture, **every worker claims a unique
+  repository name** (`worker_repos.repo_name` is UNIQUE — ownership is exclusive), and
+  rate-limit-sensitive tests each use their own source IP (the pairing limit is per source,
+  like the login limit).

@@ -72,7 +72,8 @@ public static class AuthEndpoints
             return Results.Json(rows.Select(i => new { i.Id, i.Username, i.Role, created = i.Created }));
         });
 
-        app.MapPost("/auth/identities", async (CreateIdentityRequest req, IdentityService identities) =>
+        app.MapPost("/auth/identities", async (CreateIdentityRequest req, IdentityService identities,
+            WorkerService workers) =>
         {
             if (string.IsNullOrWhiteSpace(req.Username) || string.IsNullOrWhiteSpace(req.Password))
                 return Results.BadRequest(new { ok = false, error = "username and password are required" });
@@ -83,6 +84,10 @@ public static class AuthEndpoints
                     i.Username.Equals(req.Username.Trim(), StringComparison.Ordinal)))
                 return Results.UnprocessableEntity(new { ok = false, error = $"username '{req.Username.Trim()}' is taken" });
             var row = await identities.CreateIdentityAsync(req.Username.Trim(), req.Password, role);
+            // Identity binding (part 3): a worker identity owns exactly one worker record from
+            // the moment it exists — pairing uses the same path.
+            if (role == AuthRoles.Worker)
+                await workers.EnsureForIdentityAsync(row.Id);
             return Results.Created($"/auth/identities/{row.Username}", new { row.Id, row.Username, row.Role });
         });
 

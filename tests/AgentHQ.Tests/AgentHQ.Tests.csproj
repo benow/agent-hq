@@ -12,6 +12,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/AgentHQ.Api/AgentHQ.Api.csproj" />
+    <ProjectReference Include="../../src/AgentHQ.Client.Conformance/AgentHQ.Client.Conformance.csproj" />
     <ProjectReference Include="../../src/AgentHQ.Providers.ZCode/AgentHQ.Providers.ZCode.csproj" />
     <ProjectReference Include="../../src/AgentHQ.Commands.ZCode/AgentHQ.Commands.ZCode.csproj" />
   </ItemGroup>

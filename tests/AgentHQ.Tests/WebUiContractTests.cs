@@ -158,4 +158,26 @@ public class WebUiContractTests(AgentHQApp app) : IClassFixture<AgentHQApp>
         Assert.Equal("conversation.message", row.GetProperty("type").GetString());
         Assert.Equal("hello", row.GetProperty("payload").GetProperty("text").GetString());
     }
+
+    [Fact]
+    public async Task SpokesPageFieldsAndApproveRouteAreTheOnesTheUiReads()
+    {
+        // The Spokes dialog (part 3): presence rendering + the pairing approve action.
+        var appJs = await app.Client.GetStringAsync("/app.js");
+        // The approve call is the browser-side half of the device flow (rule 10), and it must
+        // carry the contract header like every /workers/ call.
+        Assert.Contains("/workers/pairing/${encodeURIComponent(nonce)}/approve", appJs);
+        Assert.Contains("\"X-AgentHQ-Contract\": \"1\"", appJs);
+        Assert.Contains("$(\"#spokes-form\").addEventListener(\"submit\", approvePairing)", appJs);
+        Assert.Contains("$(\"#btn-create-pairing\").addEventListener(\"click\", createPairing)", appJs);
+
+        // GET /workers returns every field the dialog reads.
+        var res = await app.Client.GetFromJsonAsync<JsonElement>("/workers");
+        Assert.True(res.TryGetProperty("workers", out var workers));
+        Assert.True(workers.ValueKind == JsonValueKind.Array);
+        var indexHtml = await app.Client.GetStringAsync("/index.html");
+        foreach (var id in new[] { "btn-spokes", "spokes-list", "spoke-name", "pairing-hint",
+                     "btn-create-pairing", "btn-approve-pairing" })
+            Assert.Contains(id, indexHtml);
+    }
 }

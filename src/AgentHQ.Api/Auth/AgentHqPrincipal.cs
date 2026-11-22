@@ -18,10 +18,11 @@ public sealed record AgentHqPrincipal(string Username, string Role, string? Toke
 /// <summary>
 /// The one authorization helper (roles, not scopes): the middleware resolves a principal,
 /// this decides whether it may touch the route. Group map per the recorded decision —
-/// <c>admin</c> everything; <c>agent</c> reads + plan commands + exchange + MCP;
-/// <c>worker</c> the spoke endpoints only (part 3 registers and enforces them — every
-/// current route is refused, the stub lives here so part 3 has one place to extend);
-/// <c>ci</c> the hook ingest only.
+/// <c>admin</c> everything; <c>agent</c> reads + plan commands + exchange + MCP + the worker
+/// list (the Spokes page reads presence); <c>worker</c> its own spoke slice (register,
+/// heartbeat, snapshot, events, commands — per-worker scoping is the 404 own-id rule the
+/// endpoints enforce) plus read on <c>/events</c>, the down-signal stream (part 3 rules 0);
+/// <c>ci</c> the hook ingest and the CI event ingest.
 /// </summary>
 public static class AuthPolicy
 {
@@ -38,9 +39,14 @@ public static class AuthPolicy
                 if (path.StartsWith("/hooks/", StringComparison.Ordinal)) return false;     // ci-only
                 return true;
             case AuthRoles.Ci:
-                return path.StartsWith("/hooks/", StringComparison.Ordinal);
+                return path.StartsWith("/hooks/", StringComparison.Ordinal)
+                       || path.StartsWith("/ci/", StringComparison.Ordinal);
             case AuthRoles.Worker:
-                return false; // spoke endpoint groups arrive with part 3; nothing is granted yet
+                // The pairing routes are anonymous (rule 10) and never reach here. GET /workers
+                // (the fleet list) stays admin/agent: a worker token sees only its own slice.
+                return path.StartsWith("/events", StringComparison.Ordinal)
+                       || (path.StartsWith("/workers/", StringComparison.Ordinal)
+                           && !path.Equals("/workers", StringComparison.Ordinal));
             default:
                 return false;
         }

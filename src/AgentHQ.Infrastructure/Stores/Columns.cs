@@ -77,4 +77,58 @@ internal static class Columns
         seq AS Seq, at AS At, kind AS Kind, username AS Username, route AS Route,
         source AS Source, detail AS Detail
         """;
+
+    public const string Worker = """
+        id AS Id, identity_id AS IdentityId, name AS Name, machine AS Machine, version AS Version,
+        capabilities AS Capabilities, registered_at AS RegisteredAt, last_heartbeat_at AS LastHeartbeatAt,
+        last_accepted_seq AS LastAcceptedSeq, next_expected_seq AS NextExpectedSeq
+        """;
+
+    public const string WorkerRepo = """
+        worker_id AS WorkerId, repo_name AS RepoName, root_path AS RootPath
+        """;
+
+    public const string WorkerPlan = """
+        worker_id AS WorkerId, id AS Id, slug AS Slug, name AS Name, repository_id AS RepositoryId,
+        file_path AS FilePath, status AS Status, priority AS Priority, is_blocked AS IsBlocked,
+        blocked_reason AS BlockedReason, session_external_id AS SessionExternalId,
+        implemented_by_session_id AS ImplementedBySessionId, content_hash AS ContentHash,
+        checked AS Checked, total AS Total, version AS Version, created_at AS CreatedAt,
+        updated_at AS UpdatedAt, markdown AS Markdown
+        """;
+
+    public const string WorkerHistory = """
+        worker_id AS WorkerId, seq AS Seq, plan_id AS PlanId, from_status AS FromStatus,
+        to_status AS ToStatus, actor_type AS ActorType, actor_session_id AS ActorSessionId,
+        command AS Command, git_head AS GitHead, note AS Note,
+        separation_of_duties_warning AS SeparationOfDutiesWarning, via_shortcut AS ViaShortcut, at AS At
+        """;
+
+    public const string WorkerSession = """
+        worker_id AS WorkerId, provider AS Provider, external_id AS ExternalId,
+        repository_id AS RepositoryId, title AS Title, task_type AS TaskType,
+        last_outcome AS LastOutcome, external_time_created AS ExternalTimeCreated,
+        external_time_updated AS ExternalTimeUpdated, first_user_message_excerpt AS FirstUserMessageExcerpt,
+        archived AS Archived, deleted AS Deleted, ingested_at AS IngestedAt
+        """;
+
+    public const string WorkerLesson = """
+        worker_id AS WorkerId, entry_id AS EntryId, title AS Title, category AS Category,
+        source_plan_id AS SourcePlanId, content_hash AS ContentHash, first_seen_at AS FirstSeenAt
+        """;
+
+    public const string WorkerCommand = """
+        id AS Id, worker_id AS WorkerId, kind AS Kind, repo AS Repo, actor AS Actor,
+        payload AS Payload, issued_at AS IssuedAt, lease_until AS LeaseUntil, result_ok AS ResultOk,
+        result_error AS ResultError, result_hash AS ResultHash, finished_at AS FinishedAt
+        """;
+
+    public const string WorkerPairing = """
+        nonce AS Nonce, created_at AS CreatedAt, expires_at AS ExpiresAt, state AS State,
+        identity_id AS IdentityId, token_raw AS TokenRaw, token_id AS TokenId
+        """;
+
+    public const string HubState = """
+        key AS Key, value AS Value
+        """;
 }

@@ -104,3 +104,31 @@ is diagnosed. A new failure mode added here must record one too.
   Agent HQ's own events, not access logs.
 - `UseSystemd()` adds journal integration and graceful SIGTERM; the unit sends SIGINT
   (`KillSignal=SIGINT`) with `TimeoutStopSec=10`.
+
+## Spoke routes (part 3, distributed)
+
+- `WorkerEndpoints.MapWorkers` registers the `/workers/` + `/ci/` routes; `ContractMiddleware`
+  (`app.UseContractHeader`, right after `UseAuth`) gates the whole group on
+  `X-AgentHQ-Contract` — missing/unknown major → 400 naming both versions. **Loopback is
+  exempt** (trusted perimeter, same rule as auth): the local test host and local curl need no
+  header, remote clients always do.
+- **Own-id scoping is per-request, not a role**: `ResolveScopedAsync` resolves the caller's
+  worker via identity → `WorkerService.GetByIdentityAsync` and 404s anything else — unknown
+  and foreign ids are indistinguishable. Loopback/admin may address any id.
+- Pairing create + poll are the **only anonymous contract routes** (exempted in
+  `AuthMiddleware`, not in `AuthPolicy`); approve requires `IsAdmin` → 401. They are not on
+  the edge allowlist, so through the edge they stay 404.
+- Worker identity binding: wherever a `worker`-role identity is created (the
+  `/auth/identities` endpoint, pairing approval) call `WorkerService.EnsureForIdentityAsync` —
+  one worker record per identity, from the moment the identity exists.
+- `release.available` fans out in `BuildAsync` at startup when `hub_state.release.version`
+  differs from `WorkerService.HubVersion` (assembly version, not informational). The stored
+  value is written on every start.
+- The web UI's pairing approve sends `X-AgentHQ-Contract: 1` — contract tests pin it.
+
+<!-- agent-hq -->
+## Development is managed via Agent HQ
+
+Plans live in `docs/plans/` and move through a managed lifecycle (`/plan` commands).
+Before working: read `docs/plans/lessons.md` — the repository's accumulated lessons.
+The Agent HQ MCP tools are self-describing; orient with `get_overview`.

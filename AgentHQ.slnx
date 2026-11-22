@@ -1,6 +1,8 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/AgentHQ.Api/AgentHQ.Api.csproj" />
+    <Project Path="src/AgentHQ.Client/AgentHQ.Client.csproj" />
+    <Project Path="src/AgentHQ.Client.Conformance/AgentHQ.Client.Conformance.csproj" />
     <Project Path="src/AgentHQ.Commands.ZCode/AgentHQ.Commands.ZCode.csproj" />
     <Project Path="src/AgentHQ.Core/AgentHQ.Core.csproj" />
     <Project Path="src/AgentHQ.Infrastructure/AgentHQ.Infrastructure.csproj" />

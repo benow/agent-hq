@@ -159,3 +159,25 @@ are normalised before comparison; keep it that way or `/foo` will match `/foobar
   swallowed one. The loader also **keeps full resource names as journal keys** (that is what
   deployed SQLite journals hold); do not "tidy" them into short names or every deployed db
   re-runs every script at next boot.
+
+## Workers, queue, pairing (part 3, distributed)
+
+- `IWorkerStore` (`WorkerStore` / `WorkerStorePg`) owns workers, per-worker projections
+  (`worker_plans/worker_history/worker_sessions/worker_lessons/worker_repos`), the command
+  queue, pairing nonces and `hub_state`. Row models + column aliases follow the same
+  migration → Columns → model order as everything else.
+- **The atomicity in the store IS contract rule 2**: `ApplyEventBatchAsync` and
+  `ApplySnapshotAsync` insert event rows into the shared `events` table and move the
+  worker's cursor (`next_expected_seq`) in one transaction. Doing the merge through
+  `IEventStore.AppendAsync` would break that — a crashed ack would double-apply. The
+  service fans the applied rows out to `Published` subscribers only after commit.
+- `worker_repos.repo_name` is UNIQUE — ownership exclusivity is a database fact, not just a
+  service check; `ApplySnapshotAsync` re-checks inside its transaction and names the other
+  worker on conflict.
+- Registration also claims `worker_repos` from the `plan-engine` capability's repositories —
+  routing works from first registration, snapshots refresh the same table.
+- Pg store notes: the claim's `IN` list is expanded into named parameters by hand (Dapper's
+  automatic expansion emits positional syntax Npgsql rejects); `RETURNING seq` replaces
+  `last_insert_rowid()`.
+- Pairing tokens: the raw worker token is stored in `worker_pairing.token_raw` only until the
+  single poll delivery (then cleared). Never log it; never copy it anywhere else.

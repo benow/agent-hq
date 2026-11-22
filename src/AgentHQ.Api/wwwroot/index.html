@@ -28,6 +28,7 @@
     </button>
     <button id="btn-submit" class="btn primary">Submit plan</button>
     <button id="btn-repos" class="btn">Repositories</button>
+    <button id="btn-spokes" class="btn">Spokes</button>
   </header>
 
   <main>
@@ -159,6 +160,22 @@
       <div class="dialog-actions">
         <button type="button" class="btn" id="btn-cancel-repo">Close</button>
         <button type="submit" class="btn primary">Register</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="spokes-dialog">
+    <form id="spokes-form" method="dialog">
+      <h2>Spokes</h2>
+      <ul id="spokes-list" class="repos"></ul>
+      <label>Pair a new spoke
+        <input id="spoke-name" name="name" placeholder="spoke name (e.g. laptop-spoke)" required>
+      </label>
+      <p class="hint" id="pairing-hint"></p>
+      <div class="dialog-actions">
+        <button type="button" class="btn" id="btn-cancel-spokes">Close</button>
+        <button type="button" class="btn primary" id="btn-create-pairing">Create pairing code</button>
+        <button type="submit" class="btn primary" id="btn-approve-pairing">Approve</button>
       </div>
     </form>
   </dialog>

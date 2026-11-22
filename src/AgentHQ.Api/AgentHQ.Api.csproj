@@ -12,6 +12,9 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../AgentHQ.Core/AgentHQ.Core.csproj" />
+    <!-- The hub implements the wire contract, so it binds the client package's DTOs
+         (plan 03: ProjectReference while developing; the feed is criterion 1's exercise). -->
+    <ProjectReference Include="../AgentHQ.Client/AgentHQ.Client.csproj" />
     <ProjectReference Include="../AgentHQ.Infrastructure/AgentHQ.Infrastructure.csproj" />
     <ProjectReference Include="../AgentHQ.Providers.ZCode/AgentHQ.Providers.ZCode.csproj" />
     <ProjectReference Include="../AgentHQ.Commands.ZCode/AgentHQ.Commands.ZCode.csproj" />

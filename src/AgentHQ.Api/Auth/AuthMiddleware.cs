@@ -83,6 +83,21 @@ public sealed class AuthMiddleware
             return;
         }
 
+        // The pairing bootstrap (part 3, rule 10): the only anonymous contract routes this
+        // part adds — create and poll are unauthenticated by design (rate limit + TTL are the
+        // abuse controls); approve stays behind the admin cookie below. Not on the edge
+        // allowlist, so through the edge these stay 404 like every other non-/mcp path.
+        var isPairingCreate = path == "/workers/pairing" && method == "POST";
+        var isPairingPoll = path.StartsWith("/workers/pairing/", StringComparison.Ordinal)
+                            && method == "GET"
+                            && !path.EndsWith("/approve", StringComparison.Ordinal);
+        if (isPairingCreate || isPairingPoll)
+        {
+            ctx.Items[AgentHqPrincipalExtensions.ItemsKey] = null;
+            await _next(ctx);
+            return;
+        }
+
         var principal = await ResolveTokenAsync(ctx, path, source);
         if (principal is null)
         {
