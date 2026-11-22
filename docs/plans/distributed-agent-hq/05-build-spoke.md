@@ -42,6 +42,31 @@ build on builds** — with the topology (which machine runs the hub) as configur
 - **CI ingest**: `POST /ci/events` on loopback, same payload model as the hub route;
   actor = the CI run (`ci:<workflow>/<run-id>`), transportedBy = the spoke. Enqueued to
   the outbox, forwarded in order, idempotent at the hub (contract rule 2).
+- **The sender side is reusable GitHub Actions in a dedicated repo** (2026-11-22
+  amendment, Andy's proposal — this fills the "notify-agent-hq step" hole the draft left
+  undesigned): `benow/agent-hq-actions`, composite actions, consumed as
+  `uses: benow/agent-hq-actions/notify@v1` (tag-pinned). **One thin `notify` action**, not
+  N granular ones — inputs `stage`, `status`, `conclusion`; the terminal call runs with
+  `if: always()` (the "in a finally" requirement). The state-transition vocabulary
+  (`run.started`, `stage.completed`, `test.started`, `run.concluded`, extensible) is
+  defined in part 3's payload model — the contract is the single versioning home; the
+  actions repo is only a versioned sender of it.
+- **Transport selection is action inputs, per the loopback rule**: a co-located runner
+  posts to the build spoke's loopback (no secret, outbox tolerance — the default on
+  builds); a non-co-located runner posts to the hub URL with a `ci`-role token stored as
+  that repo's Actions secret. `ci` identities are created per consumer repo via the
+  dashboard (part 8's identity surface).
+- **Workflow adoption is a tool command, an explicit opt-in**: `agent-hq workflow add`
+  (part 8's tool) inserts the notify steps into `.github/workflows/*.yml`. This is the
+  deliberate exception to "the repo tree stays pristine" — CI integration IS a workflow
+  change, so it is additive, removable, and user-initiated, never done implicitly.
+- **Constraints recorded**: LAN-reachable self-hosted runners only — GitHub-hosted
+  runners cannot reach the hub, and the hub is never exposed publicly for this (the edge
+  stays MCP-only). The private actions repo is consumed within the benow org.
+- **Relationship to the observation leg**: structured stage events come from adopting
+  workflows; the `history.jsonl` tail/backfill keeps serving the co-located nastv setup.
+  If adoption makes the tail redundant for a repo, that supersession is decided then —
+  both run until one is demonstrably dead.
 - **Health checks — bounded and deterministic** (no monitoring framework, no
   summarisation): a declarative list in spoke config, each check producing
   `ok | warn | fail` plus a one-line detail:
@@ -110,3 +135,17 @@ build on builds** — with the topology (which machine runs the hub) as configur
   server as a spoke too — one general client, two instances (dev, build). Scope kept
   deliberately small: no monitoring framework, no re-run triggers; the data rail and a
   bounded, deterministic check list.
+
+- 2026-11-22 — AMENDED in the design session with Andy (build integration formalization):
+  the sender side is now designed — a dedicated **`benow/agent-hq-actions` repo of
+  composite actions** (one thin `notify` action, tag-pinned, terminal call `if: always()`)
+  whose state-transition vocabulary (`run.started`, `stage.completed`, `test.started`,
+  `run.concluded`) is owned by part 3's payload model — senders are transport only. The
+  part-3 review session's 03 rewrite (in flight, uncommitted, not mine to touch) already
+  carries the `/ci/events` payload sketch with a "freeze with nastv builds-stack plan 4"
+  note; the vocabulary folds into that freeze. Workflow adoption = `agent-hq workflow add`
+  in part 8's tool — the deliberate, explicit exception to "the repo tree stays pristine".
+  Constraints recorded: LAN-reachable self-hosted runners only (GitHub-hosted runners
+  cannot see the hub; the hub is never exposed for this — the edge stays MCP-only). The
+  `history.jsonl` tail/backfill leg stays until workflow adoption demonstrably makes it
+  dead for a repo; supersession decided then, not now.

@@ -67,8 +67,10 @@ Repository (any, on a paired machine):
 ## Steps
 
 - [ ] `AgentHQ.Tool` project (the `agent-hq` tool): `install` (spoke unit + harness +
-      pairing), `init` (surface hub setup code), `uninstall` (removal is part of
-      development). Pack/push rides part 3's feed pipeline.
+      pairing), `init` (surface hub setup code), `workflow add` (insert the part-5
+      `agent-hq-actions/notify` steps into a repo's GitHub workflows — the explicit
+      build-integration opt-in), `uninstall` (removal is part of development). Pack/push
+      rides part 3's feed pipeline.
 - [ ] Setup-code wizard: one-time code generation on identity-less start (logged + `init`),
       `GET /setup/status`, `POST /setup/complete` (single-use, burned; refused once any
       identity exists), the wizard page in `wwwroot`; env bootstrap demoted to headless.
