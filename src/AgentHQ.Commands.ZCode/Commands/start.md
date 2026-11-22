@@ -1,4 +1,4 @@
-<!-- agent-hq v1 -->
+<!-- agent-hq v2 -->
 ---
 description: Take ownership of refining a plan to implementable quality
 ---

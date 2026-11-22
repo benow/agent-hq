@@ -1,4 +1,4 @@
-<!-- agent-hq v1 -->
+<!-- agent-hq v2 -->
 ---
 description: Clear a plan's blocked flag and resume
 ---

@@ -1,4 +1,4 @@
-<!-- agent-hq v1 -->
+<!-- agent-hq v2 -->
 ---
 description: Review a refined plan for a junior implementer
 ---

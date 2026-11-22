@@ -1,4 +1,4 @@
-<!-- agent-hq v1 -->
+<!-- agent-hq v2 -->
 ---
 description: Send a plan back to refining with the reviewer's concerns
 ---

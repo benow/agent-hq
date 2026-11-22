@@ -29,8 +29,11 @@ public class InstallerTests : IDisposable
 
         var commands = Directory.GetFiles(Path.Combine(_home, ".zcode", "commands", "plan"), "*.md");
         Assert.Equal(14, commands.Length);
+        // The marker is the installer's own version (bump both together, per the commands
+        // feature file): every shipped template must carry the current one.
+        var marker = $"<!-- agent-hq v{Installer.CommandVersion} -->";
         foreach (var file in commands)
-            Assert.StartsWith("<!-- agent-hq v1 -->", File.ReadAllText(file));
+            Assert.StartsWith(marker, File.ReadAllText(file));
 
         var settings = JsonDocument.Parse(File.ReadAllText(Path.Combine(_home, ".zcode", "settings.json")));
         var cmd = settings.RootElement.GetProperty("hooks").GetProperty("UserPromptSubmit")[0]
@@ -79,8 +82,9 @@ public class InstallerTests : IDisposable
         var exit = Installer.Run(_home, _repo, "5317");
         Assert.Equal(2, exit);   // warnings
         Assert.Equal(edited, File.ReadAllText(Path.Combine(dest, "start.md")));
-        // ...but the other commands are still installed
-        Assert.StartsWith("<!-- agent-hq v1 -->", File.ReadAllText(Path.Combine(dest, "implement.md")));
+        // ...but the other commands are still installed (current marker, per the constant)
+        Assert.StartsWith($"<!-- agent-hq v{Installer.CommandVersion} -->",
+            File.ReadAllText(Path.Combine(dest, "implement.md")));
     }
 
     [Fact]
@@ -96,7 +100,8 @@ public class InstallerTests : IDisposable
 
         var exit = Installer.Run(_home, _repo, "5317");
         Assert.Equal(0, exit);
-        Assert.StartsWith("<!-- agent-hq v1 -->", File.ReadAllText(Path.Combine(dest, "implement.md")));
+        Assert.StartsWith($"<!-- agent-hq v{Installer.CommandVersion} -->",
+            File.ReadAllText(Path.Combine(dest, "implement.md")));
     }
 
     [Fact]
