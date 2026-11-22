@@ -294,7 +294,8 @@ Rules that are the contract:
       per-worker projections incl. markdown), paired stores following the
       `IIdentityStore` pattern; unique index on `(worker_id, origin_seq)`; apply the
       Postgres traps from `src/AgentHQ.Infrastructure/AGENTS.md` (named-parameter IN
-      expansion, `COUNT` casts, `RETURNING`).
+      expansion, `COUNT` casts, `RETURNING`). *(The unique key arrived as its own
+      migrations in the fixing pass: `worker_event_keys`, SQLite `0006` / Pg `0004`.)*
 - [x] Registration + heartbeat: services and routes, idempotent re-registration, own-id
       enforcement (404 on another worker's id), presence fields (last heartbeat, version,
       capabilities), the 900 s offline rule.
@@ -319,10 +320,12 @@ Rules that are the contract:
       page).
 - [x] Publish pipeline: `.github/workflows/nuget.yml` (tag `v*`), version rule, secret
       usage; verify a local `dotnet pack` first.
-- [x] Conformance + E2E: the in-memory hub runs the kit; an E2E actor plays a fake spoke
-      (register → snapshot → events → SSE-signal → command claim → result), including
-      kill-mid-drain, the ack-lost resend, and the SSE-down → long-poll-fallback
-      transition.
+- [x] Conformance + E2E: the in-memory hub runs the kit; fake-spoke coverage plays
+      register → snapshot → events → SSE-signal → command claim → result, including
+      kill-mid-drain (crash after commit, re-register, ack-lost resend trims), the
+      SSE-down → long-poll-fallback transition with no command lost, and two concurrent
+      batches for one worker applying each originSeq once. (Fixing pass 2026-11-22: the
+      three E2E cases were ticked before they existed; they now do.)
 - [x] Throwaway consumer: after the first tag push, a scratch console project restores
       `AgentHQ.Client` from nuget.benow.ca and completes the register → heartbeat →
       snapshot → events → command round trip against a hub (criterion 1; transcript into
@@ -540,6 +543,49 @@ Rules that are the contract:
   429 per-source), 10 (own-id 404, role scoping), 3's sequential cases, 4, 5: all verified
   by direct test inspection and the green run. `/plan verify` via the hook did not reach the
   hub (plan still `implemented` after the command); status moved via REST, same PlanService.
+
+- 2026-11-22 — FIXING PASS (root causes, then the fixes; suite green before this claim).
+
+  Root causes of the three verify failures: (a) criterion 1 was a *gate* (tag push awaiting
+  Andy) recorded only in prose, so verification spent a cycle on it — now a declared gate in
+  the `/plan implemented` and `/plan verify` templates (v2, `Installer.CommandVersion = 2`,
+  reinstalled); (b) the E2E step was ticked from the implementation plan's intent rather than
+  the code, and nothing forced a re-read — the missing tests are added below; (c) the
+  `(worker_id, origin_seq)` index was skipped as "the cursor is enough", which is true for
+  sequential retries and false for two concurrent batches on Postgres READ COMMITTED — the
+  key exists now.
+
+  Fixed:
+  1. **Unique key realised**: `worker_event_keys(worker_id, origin_seq)` — SQLite
+     `Migrations/0006_WorkerEventKeys.sql`, Pg `Migrations.Pg/0004_WorkerEventKeys.sql`.
+     `ApplyEventBatchAsync` / `ApplySnapshotAsync` (both stores) insert the key
+     `ON CONFLICT DO NOTHING` in the same transaction as the event row, skip a row whose key
+     already exists (so a stale cursor read cannot double-apply), update the cursor with
+     `MAX`/`GREATEST` so a losing batch never rewinds it, and return the committed cursor
+     re-read from the row. Deviation 3 from the implement entry is therefore retired.
+  2. **Registration repo conflict is 409, not 500** (`IWorkerStore.SetReposAsync` returns the
+     owning worker; `WorkerService.RegisterAsync` returns an outcome; the route answers 409
+     naming the owner and says what to do; the refreshed declaration is kept).
+  3. **Duplicate pairing name is 422 `name_taken`, not 500** (pre-checked; a lost race on the
+     identities UNIQUE is caught and mapped to the same answer; the nonce stays pending).
+  4. **Missing tests added** (`WorkerTests`): `KillMidDrainResendLosesAndDuplicatesNothing`
+     (commit → "crash" → re-register same workerId → ack-lost resend trims → drain continues;
+     five rows, each originSeq once), `SseDownFallsBackToLongPollClaimWithNoCommandLost`
+     (stream dropped, command enqueued during the poll, delivered by the poll, then leased),
+     `ConcurrentBatchesForOneWorkerApplyOnce` (two identical batches in parallel → three rows,
+     cursor at 4), `RegistrationRepoOwnedByAnotherWorkerConflicts` (409 + owner named, own
+     claim intact), `PairingApproveWithTakenNameIsACleanConflict` (422 `name_taken`, nonce
+     retried successfully).
+  5. Docs kept current: `docs/features/distributed.md` (key-enforced uniqueness, registration
+     409, `name_taken`), `docs/features/plan-lifecycle.md` (gates in the credibility rules),
+     `src/AgentHQ.Infrastructure/AGENTS.md` (the key table, the MAX cursor, the two clean
+     conflicts). `scripts/test.sh` now retries a CLR-aborted *build* once, not just the test
+     host (this bit twice during verification).
+
+  Tests: full suite green on a clean rebuild — **225 passed / 4 skipped** (the 4 are the
+  Docker-gated Postgres/live smoke), up from 220 with the five new tests. Live hub stopped and
+  restarted around the run. Command templates reinstalled (`install-zcode`). Nothing in the
+  hub's user surfaces routes through the queue yet — that is part 4 by design, unchanged.
 
 - 2026-11-22 — CRITERION 1 CLOSED (verifier session, with Andy's go for the tag push). Tag
   `v1.0.0` pushed (commits ed51cb5 part 3, 9598da1 command templates v2, eb9762b status log);

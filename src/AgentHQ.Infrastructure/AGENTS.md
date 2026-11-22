@@ -171,13 +171,23 @@ are normalised before comparison; keep it that way or `/foo` will match `/foobar
   worker's cursor (`next_expected_seq`) in one transaction. Doing the merge through
   `IEventStore.AppendAsync` would break that — a crashed ack would double-apply. The
   service fans the applied rows out to `Published` subscribers only after commit.
+- **`worker_event_keys` is rule 2's uniqueness** (`Migrations/0006_WorkerEventKeys.sql`,
+  `Migrations.Pg/0004_WorkerEventKeys.sql`): one `(worker_id, origin_seq)` row per applied
+  event, inserted `ON CONFLICT DO NOTHING` in the same transaction. The cursor alone is not
+  safe — two concurrent batches can read the same `next_expected_seq` (Postgres READ
+  COMMITTED) and both apply; the key makes the loser skip. Cursor updates use `MAX` /
+  `GREATEST` so a losing batch can never rewind the winner's cursor, and the response's
+  `nextExpected` is re-read from the row after the update.
 - `worker_repos.repo_name` is UNIQUE — ownership exclusivity is a database fact, not just a
-  service check; `ApplySnapshotAsync` re-checks inside its transaction and names the other
-  worker on conflict.
+  service check; `ApplySnapshotAsync` and `SetReposAsync` (registration) re-check inside
+  their transaction and return the other worker's id so the route answers 409, never a 500.
 - Registration also claims `worker_repos` from the `plan-engine` capability's repositories —
-  routing works from first registration, snapshots refresh the same table.
+  routing works from first registration, snapshots refresh the same table. A conflicting
+  claim refuses the registration (409) but keeps the refreshed declaration.
 - Pg store notes: the claim's `IN` list is expanded into named parameters by hand (Dapper's
   automatic expansion emits positional syntax Npgsql rejects); `RETURNING seq` replaces
   `last_insert_rowid()`.
 - Pairing tokens: the raw worker token is stored in `worker_pairing.token_raw` only until the
-  single poll delivery (then cleared). Never log it; never copy it anywhere else.
+  single poll delivery (then cleared). Never log it; never copy it anywhere else. A duplicate
+  spoke name on approve is `422 name_taken` (pre-checked, and a lost race on the UNIQUE
+  username is caught and mapped to the same answer) — the nonce stays pending.

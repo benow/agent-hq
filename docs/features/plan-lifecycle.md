@@ -274,10 +274,20 @@ from both sides:
 1. **The template forces evidence.** Summary, commit hashes and subjects, tests run with
    results, documentation updated, lessons consulted, and deviations from the plan. In the
    `fixing` phase it also requires the root cause and the refined lesson.
-2. **A different session checks it.** The verifier reads the criteria, reads the evidence, runs
+2. **Gates are declared, not buried.** A criterion that cannot be evidenced yet (a tag push
+   awaiting the operator, a credential, a decision the code cannot make) must appear in a
+   visible `Gates:` list at claim time — what unblocks it and who must act — together with the
+   one specific question that unblocks it. A gate is not a deviation: deviations are the
+   implementer's choices, gates are things waiting on someone else. If a gate is the only
+   thing outstanding, the plan is flagged `blocked` rather than left silent.
+3. **The verifier separates gates from defects.** `/plan verify` enumerates unevidenced
+   criteria first: a human-gated one gets the operator question and a `blocked` flag, not a
+   fail cycle; `/plan fail` is reserved for what the implementation can actually fix — missing
+   tests, false claims, unrecorded deviations.
+4. **A different session checks it.** The verifier reads the criteria, reads the evidence, runs
    the tests itself, and inspects the recorded commits' diffs. The verifier's own report goes
    into the Status Log, criterion by criterion.
-3. **The history makes the actors legible.** Actor, session id, command, git head, and the
+5. **The history makes the actors legible.** Actor, session id, command, git head, and the
    separation-of-duties flag are all recorded next to each other.
 
 If an agent never reports, the plan sits in `implementing` with an idle session. That stuck

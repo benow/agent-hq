@@ -38,9 +38,12 @@ the hub's `nextExpected` for that worker:
 | `fromOriginSeq = nextExpected` | The normal case | Apply the whole batch |
 | `fromOriginSeq > nextExpected` | A gap — the spoke's cursor is ahead of the hub's | Reject `422` with the expected value; the spoke rewinds and resends |
 
-The rows and the cursor commit **together**, which is what turns a lost acknowledgement into
-a trimmed duplicate instead of a double application. No server-side gap buffering — resend
-from the cursor is the protocol.
+The rows, the origin key and the cursor commit **together**, which is what turns a lost
+acknowledgement into a trimmed duplicate instead of a double application. Uniqueness is
+enforced by a durable `(worker_id, origin_seq)` key (`worker_event_keys`), not by the cursor
+alone: two batches racing on a stale cursor read would otherwise both apply — the key is the
+rule, the cursor is the fast path. No server-side gap buffering — resend from the cursor is
+the protocol.
 
 The hub re-sequences accepted events into its own global stream: origin ids, actors and
 timestamps ride in the payload (`workerId`, `originSeq`, `actor`, `transportedBy`,
@@ -59,9 +62,14 @@ subsequent deltas with lower `originSeq` trim as duplicates. The projections are
 rows and content — ready for the part-4 read switch; in this part the UI/MCP reads stay
 file-backed for hub-owned repositories.
 
-Ownership is exclusive: a snapshot claiming a repository another worker already owns is
-rejected `409`, naming the other worker. The same-worker re-snapshot is the normal idempotent
-refresh.
+Ownership is exclusive: a snapshot **or a registration** claiming a repository another worker
+already owns is rejected `409`, naming the other worker (registration still refreshes the
+declaration; only the repository claim is refused). The same-worker re-snapshot is the normal
+idempotent refresh.
+
+Operator-caused collisions are clean conflicts, never 500s: approving a pairing nonce with a
+name already in use answers `422 name_taken` and leaves the nonce pending so the operator can
+retry with another name.
 
 ## Commands
 

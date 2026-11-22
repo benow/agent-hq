@@ -20,7 +20,25 @@ cd "$(dirname "$0")/.."
 FILTER="${1:-}"
 TIMEOUT_SECS="${TEST_TIMEOUT:-600}"
 
-dotnet build -v q --nologo || exit 1
+BUILD_LOG="$(mktemp /tmp/agenthq-build-XXXXXX.log)"
+build() {
+  dotnet build -v q --nologo >"$BUILD_LOG" 2>&1
+  local code=$?
+  # The CLR 0x80131506 abort hits the first run after a build as often as the test host;
+  # retry the build once for the same reason the test run below is retried.
+  if (( code != 0 )) && grep -q "0x80131506" "$BUILD_LOG"; then
+    echo "CLR 0x80131506 abort in build (known flake); retrying once" >&2
+    dotnet build -v q --nologo >"$BUILD_LOG" 2>&1
+    code=$?
+  fi
+  if (( code != 0 )); then
+    echo "--- build failed (log: $BUILD_LOG):" >&2
+    tail -40 "$BUILD_LOG" >&2
+    return 1
+  fi
+}
+build || exit 1
+rm -f "$BUILD_LOG"
 
 ARGS=(test tests/AgentHQ.Tests --no-build --nologo)
 if [[ -n "$FILTER" ]]; then
