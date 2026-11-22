@@ -43,9 +43,13 @@ public sealed class WorkerService
     public Task<WorkerRow?> GetByIdAsync(string id) => _workers.GetByIdAsync(id);
     public Task<WorkerRow?> GetByIdentityAsync(string identityId) => _workers.GetByIdentityAsync(identityId);
 
+    public sealed record RegisterOutcome(bool Ok, string? ConflictWorkerId, WorkerRow Row);
+
     /// <summary>Idempotent registration (rule: a spoke restart must not mint a new worker and
-    /// orphan its projections and queue). Refreshes the declaration, returns the same id.</summary>
-    public async Task<WorkerRow> RegisterAsync(string workerId, RegisterRequest request)
+    /// orphan its projections and queue). Refreshes the declaration, returns the same id; a
+    /// capability claiming a repository another worker owns is refused with that owner named
+    /// (ownership is exclusive, rule 5) — never a UNIQUE violation.</summary>
+    public async Task<RegisterOutcome> RegisterAsync(string workerId, RegisterRequest request)
     {
         var row = await _workers.GetByIdAsync(workerId)
                   ?? throw new InvalidOperationException($"unknown worker {workerId}");
@@ -58,12 +62,21 @@ public sealed class WorkerService
             .Select(name => new WorkerRepoRow { WorkerId = workerId, RepoName = name, RootPath = "" })
             .ToList();
         if (repos.Count > 0)
-            await _workers.SetReposAsync(workerId, repos);
+        {
+            var conflict = await _workers.SetReposAsync(workerId, repos);
+            if (conflict is not null)
+            {
+                _logger.Warning(
+                    "workers: {WorkerId} registration claims a repository owned by {Owner} — declaration refreshed but repository claims unchanged",
+                    workerId, conflict);
+                return new RegisterOutcome(false, conflict, row);
+            }
+        }
         _logger.Information(
             "workers: {WorkerId} registered as '{Name}' on '{Machine}' v{Version} with [{Capabilities}]",
             workerId, request.name, request.machine, request.version,
             string.Join(", ", request.capabilities.Select(c => c.kind)));
-        return (await _workers.GetByIdAsync(workerId))!;
+        return new RegisterOutcome(true, null, (await _workers.GetByIdAsync(workerId))!);
     }
 
     public async Task<HeartbeatResponse> HeartbeatAsync(string workerId, string spokeVersion)

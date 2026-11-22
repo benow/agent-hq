@@ -73,16 +73,38 @@ public sealed class PairingService
             $"/workers/pairing/{row.Nonce}/approve", DateTimeOffset.FromUnixTimeMilliseconds(row.ExpiresAt)));
     }
 
+    public enum ApproveOutcome { Approved, NotApprovable, NameTaken }
+
     /// <summary>Browser approval with an admin session: creates the worker identity, its bound
     /// worker record, and a fresh worker token attached to the nonce. Single-approve — a nonce
-    /// already approved (or expired) refuses.</summary>
-    public async Task<bool> ApproveAsync(string nonce, string spokeName)
+    /// already approved (or expired) refuses. A name already in use is a clean conflict
+    /// (`name_taken`), not a 500: the nonce stays pending so the operator can retry with
+    /// another name.</summary>
+    public async Task<ApproveOutcome> ApproveAsync(string nonce, string spokeName)
     {
         var row = await _workers.GetPairingAsync(nonce);
-        if (row is null || row.State != "pending" || row.IsExpired) return false;
+        if (row is null || row.State != "pending" || row.IsExpired) return ApproveOutcome.NotApprovable;
 
-        var identity = await _identities.CreateAsync(spokeName, AuthRoles.Worker,
-            PasswordHasher.Hash(TokenGenerator.New())); // random unusable password — tokens are the credential
+        if (await _identities.GetByUsernameAsync(spokeName) is not null)
+        {
+            _logger.Warning("pairing: nonce {Nonce} approve refused — identity '{Name}' already exists; retry with another name",
+                nonce, spokeName);
+            return ApproveOutcome.NameTaken;
+        }
+
+        IdentityRow identity;
+        try
+        {
+            identity = await _identities.CreateAsync(spokeName, AuthRoles.Worker,
+                PasswordHasher.Hash(TokenGenerator.New())); // random unusable password — tokens are the credential
+        }
+        catch (System.Data.Common.DbException ex)
+        {
+            // A concurrent approve won the same name between the check and the insert.
+            _logger.Warning(ex,
+                "pairing: nonce {Nonce} approve raced on identity '{Name}' — treated as name_taken", nonce, spokeName);
+            return ApproveOutcome.NameTaken;
+        }
         var worker = await _workerService.EnsureForIdentityAsync(identity.Id);
         var raw = TokenGenerator.New();
         var token = await _identities.CreateTokenAsync(identity.Id, TokenGenerator.Hash(raw), label: "pairing");
@@ -94,7 +116,7 @@ public sealed class PairingService
         await _workers.UpdatePairingAsync(row);
         _logger.Information("pairing: nonce {Nonce} approved — worker {WorkerId} '{Name}' created, token {TokenId} attached",
             nonce, worker.Id, spokeName, token.Id[..8]);
-        return true;
+        return ApproveOutcome.Approved;
     }
 
     /// <summary>The poll: pending until approved; the token is delivered exactly once and the

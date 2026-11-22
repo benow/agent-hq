@@ -82,19 +82,43 @@ public sealed class WorkerStore : IWorkerStore
             new { workerId })).ToList();
     }
 
-    public async Task SetReposAsync(string workerId, IReadOnlyList<WorkerRepoRow> repos)
+    public async Task<string?> SetReposAsync(string workerId, IReadOnlyList<WorkerRepoRow> repos)
     {
         await using var conn = _db.Open();
         await using var tx = conn.BeginTransaction();
+        // Ownership is exclusive on registration too, not only on snapshot (rule 5): a second
+        // worker claiming an owned repository gets the conflict, never a UNIQUE violation.
+        foreach (var r in repos)
+        {
+            var owner = await conn.QuerySingleOrDefaultAsync<string>(
+                "SELECT worker_id FROM worker_repos WHERE repo_name = @repo",
+                new { repo = r.RepoName }, tx);
+            if (owner is not null && owner != workerId)
+            {
+                tx.Rollback();
+                return owner;
+            }
+        }
         await conn.ExecuteAsync("DELETE FROM worker_repos WHERE worker_id = @workerId", new { workerId }, tx);
         foreach (var r in repos)
             await conn.ExecuteAsync(
                 "INSERT INTO worker_repos (worker_id, repo_name, root_path) VALUES (@WorkerId, @RepoName, @RootPath)",
                 r, tx);
         tx.Commit();
+        return null;
     }
 
     // ---- event ingest ----
+
+    /// <summary>Claims the event's (worker_id, origin_seq) key; false when it was already
+    /// applied. The key IS rule 2's uniqueness, so a concurrent batch for the same worker —
+    /// which can read the same cursor — still applies each originSeq once.</summary>
+    private static async Task<bool> ClaimOriginKeyAsync(System.Data.IDbConnection conn, string workerId,
+        long originSeq, System.Data.IDbTransaction tx) =>
+        await conn.ExecuteAsync(
+            "INSERT INTO worker_event_keys (worker_id, origin_seq) VALUES (@workerId, @originSeq) " +
+            "ON CONFLICT DO NOTHING",
+            new { workerId, originSeq }, tx) == 1;
 
     public async Task<BatchApplyResult> ApplyEventBatchAsync(string workerId, long fromOriginSeq,
         IReadOnlyList<IncomingEvent> events)
@@ -112,7 +136,9 @@ public sealed class WorkerStore : IWorkerStore
             return new BatchApplyResult(BatchOutcome.Rejected, 0, 0, nextExpected, Array.Empty<AgentHqEvent>());
         }
 
-        // Below: trim the overlapping prefix, apply the tail. Equal: apply all.
+        // Below: trim the overlapping prefix, apply the tail. Equal: apply all. Per event the
+        // origin key is the final guard — a row already applied (concurrent batch, snapshot
+        // tail) is skipped even if this batch's read of the cursor was stale.
         var toApply = events.Where(e => e.OriginSeq >= nextExpected)
             .OrderBy(e => e.OriginSeq).ToList();
 
@@ -120,25 +146,29 @@ public sealed class WorkerStore : IWorkerStore
         long globalSeqFrom = 0, lastOrigin = nextExpected - 1;
         foreach (var e in toApply)
         {
+            lastOrigin = e.OriginSeq;
+            if (!await ClaimOriginKeyAsync(conn, workerId, e.OriginSeq, tx)) continue;
             var seq = await conn.ExecuteScalarAsync<long>(
                 "INSERT INTO events (type, payload, at) VALUES (@type, @payload, @at); SELECT last_insert_rowid();",
                 new { type = e.Type, payload = e.PayloadJson, at = e.At }, tx);
             if (applied.Count == 0) globalSeqFrom = seq;
             applied.Add(new AgentHqEvent(seq, e.Type, JsonSerializer.Deserialize<JsonElement>(e.PayloadJson),
                 DateTimeOffset.FromUnixTimeMilliseconds(e.At)));
-            lastOrigin = e.OriginSeq;
         }
 
-        var newNextExpected = lastOrigin + 1;
-        var newLastAccepted = applied.Count > 0
-            ? applied[^1].Seq
-            : worker.LastAcceptedSeq;
+        // MAX, never backwards: a losing concurrent batch must not rewind the winner's cursor.
         await conn.ExecuteAsync(
-            "UPDATE workers SET next_expected_seq = @nextExpected, last_accepted_seq = @lastAccepted WHERE id = @workerId",
-            new { nextExpected = newNextExpected, lastAccepted = newLastAccepted, workerId }, tx);
+            "UPDATE workers SET next_expected_seq = MAX(next_expected_seq, @nextExpected), " +
+            "last_accepted_seq = MAX(last_accepted_seq, @lastAccepted) WHERE id = @workerId",
+            new { nextExpected = lastOrigin + 1,
+                lastAccepted = applied.Count > 0 ? applied[^1].Seq : worker.LastAcceptedSeq, workerId }, tx);
+        var committed = await conn.ExecuteScalarAsync<long>(
+            "SELECT next_expected_seq FROM workers WHERE id = @workerId", new { workerId }, tx);
         tx.Commit();
-        var outcome = fromOriginSeq < worker.NextExpectedSeq ? BatchOutcome.Trimmed : BatchOutcome.Applied;
-        return new BatchApplyResult(outcome, applied.Count, globalSeqFrom, newNextExpected, applied);
+        var outcome = fromOriginSeq < worker.NextExpectedSeq || applied.Count < toApply.Count
+            ? BatchOutcome.Trimmed
+            : BatchOutcome.Applied;
+        return new BatchApplyResult(outcome, applied.Count, globalSeqFrom, committed, applied);
     }
 
     // ---- snapshot ----
@@ -219,24 +249,29 @@ public sealed class WorkerStore : IWorkerStore
 
         // The event tail merges into the global stream here (rule 5): the cursor lands on the
         // tail's end in the same transaction, so a later delta carrying lower originSeq trims.
+        // The origin key skips a tail row that was already applied, so a re-snapshot cannot
+        // double-merge the same event.
         long lastGlobal = 0, lastOrigin = 0;
         foreach (var e in eventTail.OrderBy(e => e.OriginSeq))
         {
+            lastOrigin = Math.Max(lastOrigin, e.OriginSeq);
+            if (!await ClaimOriginKeyAsync(conn, workerId, e.OriginSeq, tx)) continue;
             lastGlobal = await conn.ExecuteScalarAsync<long>(
                 "INSERT INTO events (type, payload, at) VALUES (@type, @payload, @at); SELECT last_insert_rowid();",
                 new { type = e.Type, payload = e.PayloadJson, at = e.At }, tx);
-            lastOrigin = e.OriginSeq;
         }
 
-        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         await conn.ExecuteAsync(
             """
-            UPDATE workers SET next_expected_seq = @nextExpected, last_accepted_seq = @lastAccepted
+            UPDATE workers SET next_expected_seq = MAX(next_expected_seq, @nextExpected),
+            last_accepted_seq = MAX(last_accepted_seq, @lastAccepted)
             WHERE id = @workerId
             """,
             new { nextExpected = lastOrigin + 1, lastAccepted = lastGlobal, workerId }, tx);
+        var committedCursor = await conn.ExecuteScalarAsync<long>(
+            "SELECT next_expected_seq FROM workers WHERE id = @workerId", new { workerId }, tx);
         tx.Commit();
-        return new SnapshotOutcome(false, null, lastOrigin + 1, lastGlobal);
+        return new SnapshotOutcome(false, null, committedCursor, lastGlobal);
     }
 
     public async Task<int> CountProjectionRowsAsync(string workerId)

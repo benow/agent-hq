@@ -30,9 +30,14 @@ public static class WorkerEndpoints
             var worker = await ResolveWorkerAsync(ctx, workers, req.workerId);
             if (worker is null)
                 return NotFoundAmbiguous();
-            var row = await workers.RegisterAsync(worker.Id, new RegisterRequest(
+            var outcome = await workers.RegisterAsync(worker.Id, new RegisterRequest(
                 req.name.Trim(), req.machine?.Trim() ?? "", req.version.Trim(), req.capabilities ?? []));
-            return Results.Ok(new { workerId = row.Id, serverTime = DateTimeOffset.UtcNow,
+            if (!outcome.Ok)
+                return Results.Json(new { ok = false,
+                    error = $"repository_owned_by_other_worker: {outcome.ConflictWorkerId}",
+                    detail = "ownership is exclusive; drop the repository from this spoke's plan-engine capability or release it there first" },
+                    statusCode: StatusCodes.Status409Conflict);
+            return Results.Ok(new { workerId = outcome.Row.Id, serverTime = DateTimeOffset.UtcNow,
                 contractVersion = ContractMiddleware.AgentHqContractVersion });
         });
 
@@ -111,10 +116,16 @@ public static class WorkerEndpoints
                     statusCode: StatusCodes.Status401Unauthorized);
             if (string.IsNullOrWhiteSpace(body.name))
                 return Results.BadRequest(new { ok = false, error = "name is required" });
-            return await pairing.ApproveAsync(nonce, body.name.Trim())
-                ? Results.Ok(new { ok = true })
-                : Results.Json(new { ok = false, error = "nonce_not_approvable: unknown, expired, or already used" },
-                    statusCode: StatusCodes.Status422UnprocessableEntity);
+            return await pairing.ApproveAsync(nonce, body.name.Trim()) switch
+            {
+                PairingService.ApproveOutcome.Approved => Results.Ok(new { ok = true }),
+                PairingService.ApproveOutcome.NameTaken => Results.Json(new { ok = false,
+                    error = "name_taken",
+                    detail = $"identity '{body.name.Trim()}' already exists; the nonce is still pending — approve again with another name" },
+                    statusCode: StatusCodes.Status422UnprocessableEntity),
+                _ => Results.Json(new { ok = false, error = "nonce_not_approvable: unknown, expired, or already used" },
+                    statusCode: StatusCodes.Status422UnprocessableEntity)
+            };
         });
 
         app.MapGet("/workers/pairing/{nonce}", async (string nonce, PairingService pairing) =>

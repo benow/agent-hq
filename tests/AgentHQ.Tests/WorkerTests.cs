@@ -172,8 +172,68 @@ public class WorkerTests(WorkerFixture app) : IClassFixture<WorkerFixture>
     }
 
     [Fact]
-    public async Task MergedStreamInterleavesTwoWorkersAndHubOriginEvents()
+    public async Task KillMidDrainResendLosesAndDuplicatesNothing()
     {
+        var (client, _, workerId, username, repo) = await NewWorkerAsync();
+        var seqBefore = await app.LastSeqAsync();
+
+        // The spoke drains 1–3; the hub commits, the response dies mid-drain (we drop it).
+        var first = await SendAsync(client, workerId, 0, 1, 2, 3);
+        Assert.Equal(4, first.Ack!.nextExpected);
+
+        // The spoke restarts and re-registers: same workerId, refreshed declaration (the plan's
+        // rule that a restart must not mint a new worker and orphan its projections/queue).
+        var reReg = await client.PostAsJsonAsync("/workers/register",
+            new { workerId, name = username, machine = "test-machine", version = "1.1.0", capabilities = CapsFor(repo) }, Json);
+        reReg.EnsureSuccessStatusCode();
+        Assert.Equal(workerId, (await reReg.Content.ReadFromJsonAsync<JsonElement>(Json))
+            .GetProperty("workerId").GetString());
+
+        // The ack-lost resend (from its cursor, before the death) trims: no loss, no duplication.
+        var resend = await SendAsync(client, workerId, 0, 1, 2, 3);
+        Assert.True(resend.Ack is { accepted: true });
+        Assert.Equal(4, resend.Ack!.nextExpected);
+
+        // The drain continues from the spoke's own tail (4–5 are new; the rest trims).
+        var tail = await SendAsync(client, workerId, 4, 4, 5);
+        Assert.Equal(6, tail.Ack!.nextExpected);
+
+        // Exactly five spoke events, each originSeq exactly once across the whole crash dance.
+        var rows = (await app.Get<IEventStore>().ReadSinceAsync(seqBefore))
+            .Where(e => e.Type == "plan.status_changed").ToList();
+        Assert.Equal(5, rows.Count);
+        var origins = rows.Select(e => e.Payload.GetProperty("originSeq").GetInt64()).ToList();
+        Assert.Equal([1L, 2L, 3L, 4L, 5L], origins.OrderBy(o => o).ToList());
+        Assert.Equal(5, origins.Distinct().Count());
+    }
+
+    [Fact]
+    public async Task ConcurrentBatchesForOneWorkerApplyOnce()
+    {
+        var (client, _, workerId, _, _) = await NewWorkerAsync();
+        var seqBefore = await app.LastSeqAsync();
+
+        // Two requests for the same worker racing on the same cursor read (the Postgres READ
+        // COMMITTED hazard). The (worker_id, origin_seq) key is the guard, not the cursor.
+        var results = await Task.WhenAll(
+            SendAsync(client, workerId, 0, 1, 2, 3),
+            SendAsync(client, workerId, 0, 1, 2, 3));
+        Assert.All(results, r => Assert.True(r.Ack is { accepted: true }));
+
+        var rows = (await app.Get<IEventStore>().ReadSinceAsync(seqBefore))
+            .Where(e => e.Type == "plan.status_changed").ToList();
+        Assert.Equal(3, rows.Count);
+        Assert.Equal([1L, 2L, 3L], rows.Select(e => e.Payload.GetProperty("originSeq").GetInt64())
+            .OrderBy(o => o).ToList());
+
+        // The cursor is the truth either way: a probe ahead of it names 4.
+        var (_, expected, status) = await SendAsync(client, workerId, 99, 99);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, status);
+        Assert.Equal(4, expected);
+    }
+
+    [Fact]
+    public async Task MergedStreamInterleavesTwoWorkersAndHubOriginEvents()    {
         var (clientA, _, workerA, _, repoA) = await NewWorkerAsync();
         var (clientB, _, workerB, _, repoB) = await NewWorkerAsync();
         var seqBefore = await app.LastSeqAsync();
@@ -407,6 +467,87 @@ public class WorkerTests(WorkerFixture app) : IClassFixture<WorkerFixture>
         // The signal is not the lease: the claim route delivers the envelope.
         var claim = await app.Client.GetFromJsonAsync<JsonElement>($"/workers/{workerId}/commands?wait=0");
         Assert.Equal(1, claim.GetProperty("commands").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task SseDownFallsBackToLongPollClaimWithNoCommandLost()
+    {
+        var (client, _, workerId, _, repo) = await NewWorkerAsync();
+        var queue = app.Get<CommandQueueService>();
+
+        // The stream was up and then dropped (opened, disposed — nothing is subscribed).
+        var dropped = await client.GetAsync("/events?types=commands.pending,release.available",
+            HttpCompletionOption.ResponseHeadersRead);
+        dropped.Dispose();
+
+        // With no stream, the spoke's long-poll claim is the correctness floor: a command
+        // enqueued while the poll waits is delivered by the poll itself, not by a signal.
+        var claimTask = client.GetFromJsonAsync<JsonElement>($"/workers/{workerId}/commands?wait=25", Json);
+        await Task.Delay(300);
+        var commandId = await queue.EnqueueAsync("health.check", repo, "sess_fallback",
+            JsonSerializer.SerializeToElement(new { check = "runners" }, Json));
+        var claim = await claimTask.WaitAsync(TimeSpan.FromSeconds(10));
+
+        var commands = claim.GetProperty("commands");
+        Assert.Equal(1, commands.GetArrayLength());
+        Assert.Equal(commandId, commands[0].GetProperty("commandId").GetString());
+
+        // Leased by the poll: nothing is redelivered to a second claim before expiry.
+        var again = await client.GetFromJsonAsync<JsonElement>($"/workers/{workerId}/commands?wait=0", Json);
+        Assert.Equal(0, again.GetProperty("commands").GetArrayLength());
+    }
+
+    // ---- collision taxonomy (fixing pass: operator-caused collisions are clean 4xx) ----
+
+    [Fact]
+    public async Task RegistrationRepoOwnedByAnotherWorkerConflicts()
+    {
+        var (clientA, _, workerA, _, repoA) = await NewWorkerAsync();
+        var (clientB, _, workerB, _, repoB) = await NewWorkerAsync();
+
+        // B claims A's repository → 409 naming A, never a UNIQUE-violation 500.
+        var conflict = await clientB.PostAsJsonAsync("/workers/register",
+            new { workerId = workerB, name = "spoke-b", machine = "x", version = "1", capabilities = CapsFor(repoA) }, Json);
+        Assert.Equal(HttpStatusCode.Conflict, conflict.StatusCode);
+        Assert.Contains(workerA, await conflict.Content.ReadAsStringAsync());
+
+        // B's own claim survives the refusal, and re-registering with it is idempotent.
+        var own = await clientB.PostAsJsonAsync("/workers/register",
+            new { workerId = workerB, name = "spoke-b", machine = "x", version = "1.1", capabilities = CapsFor(repoB) }, Json);
+        own.EnsureSuccessStatusCode();
+        var fleet = await app.Client.GetFromJsonAsync<JsonElement>("/workers");
+        var rowB = fleet.GetProperty("workers").EnumerateArray()
+            .Single(w => w.GetProperty("id").GetString() == workerB);
+        Assert.Equal([repoB], rowB.GetProperty("repositories").EnumerateArray()
+            .Select(r => r.GetString()).ToList());
+        Assert.Equal("1.1", rowB.GetProperty("version").GetString());
+    }
+
+    [Fact]
+    public async Task PairingApproveWithTakenNameIsACleanConflict()
+    {
+        var anon = AsRemote("192.168.0.90");
+        anon.DefaultRequestHeaders.Add("X-AgentHQ-Contract", "1");
+        var created = await anon.PostAsync("/workers/pairing", content: null);
+        created.EnsureSuccessStatusCode();
+        var nonce = (await created.Content.ReadFromJsonAsync<JsonElement>(Json)).GetProperty("nonce").GetString()!;
+
+        // The name is already an identity (the second run of a demo, a retry, a typo'd dup).
+        await app.Get<IdentityService>().CreateIdentityAsync("taken-spoke", "pw", "worker");
+        var taken = await app.Client.PostAsJsonAsync($"/workers/pairing/{nonce}/approve",
+            new { name = "taken-spoke" }, Json); // loopback is an admin session
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, taken.StatusCode);
+        var text = await taken.Content.ReadAsStringAsync();
+        Assert.Contains("name_taken", text);
+        // The message says what to do, and the nonce stays usable.
+        Assert.Contains("still pending", text);
+
+        var retry = await app.Client.PostAsJsonAsync($"/workers/pairing/{nonce}/approve",
+            new { name = "fresh-spoke-" + Guid.NewGuid().ToString("N")[..6] }, Json);
+        Assert.Equal(HttpStatusCode.OK, retry.StatusCode);
+        var delivered = await anon.GetFromJsonAsync<JsonElement>($"/workers/pairing/{nonce}");
+        Assert.Equal("approved", delivered.GetProperty("state").GetString());
+        Assert.False(string.IsNullOrEmpty(delivered.GetProperty("token").GetString()));
     }
 
     // ---- pairing (rule 10, criterion 9) ----

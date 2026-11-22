@@ -42,7 +42,9 @@ public interface IWorkerStore
 
     // ---- repository ownership ----
     Task<IReadOnlyList<WorkerRepoRow>> ListReposAsync(string workerId);
-    Task SetReposAsync(string workerId, IReadOnlyList<WorkerRepoRow> repos);
+    /// <summary>Replaces this worker's claims. Returns the owning workerId when a repo is
+    /// already claimed by a different worker (ownership is exclusive, rule 5); null on success.</summary>
+    Task<string?> SetReposAsync(string workerId, IReadOnlyList<WorkerRepoRow> repos);
 
     // ---- event ingest (rule 2 + rule 3, atomic) ----
     Task<BatchApplyResult> ApplyEventBatchAsync(string workerId, long fromOriginSeq,
