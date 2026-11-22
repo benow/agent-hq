@@ -541,6 +541,41 @@ Rules that are the contract:
   by direct test inspection and the green run. `/plan verify` via the hook did not reach the
   hub (plan still `implemented` after the command); status moved via REST, same PlanService.
 
+- 2026-11-22 — CRITERION 1 CLOSED (verifier session, with Andy's go for the tag push). Tag
+  `v1.0.0` pushed (commits ed51cb5 part 3, 9598da1 command templates v2, eb9762b status log);
+  nuget.yml published both packages to nuget.benow.ca (run 45074429192, `AgentHQ.Client` and
+  `AgentHQ.Client.Conformance` 1.0.0 confirmed via the feed's search endpoint). Throwaway
+  consumer: `/tmp/agenthq-consumer`, `dotnet add package AgentHQ.Client --version 1.0.0`
+  restored from the feed, run against a scratch hub on the LAN (`http://192.168.0.117:5399`,
+  temp data dir, killed by PID after) so the remote path — bearer token + contract header —
+  was exercised on the wire, not the loopback bypass. Transcript:
+
+      == pairing create         nonce t4XNoPkw… expires 22:03:14
+      == admin login + approve  approve → 200 OK
+      == poll (device flow)     state=approved, token received; second poll state=consumed (token=False)
+      == register               workerId d30a3126… contract v1
+      == re-register            same workerId (idempotent)
+      == heartbeat              serverVersion 1.0.0, commandsPending 0, contract v1
+      == snapshot               accepted
+      == events                 equal → accepted, globalSeqFrom=4, nextExpected=3;
+                                ack-lost resend → trimmed, nextExpected=3 (no dup);
+                                ahead → 422, expected=3
+      == claim                  long-poll → 0 envelopes (no enqueue surface until part 4 —
+                                the envelope leg is proven by the conformance kit in-suite)
+      == CI ingest              accepted=True seq=5 (ci-role identity; the worker token was
+                                correctly refused on /ci/events; ci on /plans → 403)
+      == ALL ROUND TRIPS OK
+
+  Two new findings from the live run (operator-caused collisions become 500s; both need the
+  clean conflict responses the taxonomy pins, in the fixing pass):
+  1. `POST /workers/pairing/{nonce}/approve` with an already-taken username → 500
+     (UNIQUE constraint on identities.username escapes PairingService.ApproveAsync).
+  2. Registration claiming a repo already owned by another worker → 500 (the registration
+     path's SetReposAsync hits worker_repos' UNIQUE without the ownership conflict the
+     snapshot path answers 409). Also observed: the worker token on /ci/events is refused
+     correctly (403 via AuthPolicy), and the approve/poll/consumed exactly-once flow works
+     over a real remote address.
+
   Not done here, deliberately: **criterion 1** (throwaway consumer from nuget.benow.ca)
   needs the first tag push, which needs a commit + push — not done without Andy's go
   (standing rule). Local `dotnet pack` of both packages verified. `docs/features/distributed.md`
