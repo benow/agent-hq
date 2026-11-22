@@ -13,7 +13,7 @@ namespace AgentHQ.Commands.ZCode;
 /// </summary>
 public static class Installer
 {
-    public const string CommandVersion = "1";
+    public const string CommandVersion = "2";
 
     public static int Run(string home, string repo, string port)
     {
