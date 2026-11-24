@@ -78,7 +78,8 @@ goes to the worker that owns the repository) or by capability kind (a `health.ch
 `build-health` holder). Capabilities are typed (`{kind, …fields}`); unknown kinds are stored
 and surfaced but never routed. Claim returns up to **10** envelopes with a **60 s** visibility
 lease; expiry redelivers; a leased envelope is not returned again before expiry, even to the
-same worker.
+same worker. A heartbeat's `commandsPending` counts **queued (un-leased)** envelopes: a live
+lease does not count, and a crashed spoke's command counts again once its lease expires.
 
 Results are idempotent by `commandId`: the first result records with its canonical
 `resultHash` (sha256 of `{ok, error}` as canonical JSON — `AgentHqClient.ResultHash` applies

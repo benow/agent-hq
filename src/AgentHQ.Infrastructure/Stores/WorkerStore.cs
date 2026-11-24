@@ -318,15 +318,23 @@ public sealed class WorkerStore : IWorkerStore
         var ids = (await conn.QueryAsync<string>(
             """
             SELECT id FROM worker_commands
-            WHERE worker_id = @workerId AND lease_until IS NULL AND result_ok IS NULL
+            WHERE worker_id = @workerId AND (lease_until IS NULL OR lease_until <= @NowMs)
+              AND result_ok IS NULL
             ORDER BY issued_at LIMIT @max
-            """, new { workerId, max }, tx)).ToList();
+            """, new
+            {
+                // SQLite renumbering trap (2026-11-23): a bare @now/@leaseUntil sits next to
+                // keyword-named columns (lease_until) and binds wrong — `now` arrived as garbage
+                // and `leaseUntil` bound as `now`, so the claim wrote the wrong rows. Unit-
+                // suffixed names do not collide.
+                workerId, NowMs = now, LeaseUntilMs = leaseUntil, max
+            }, tx)).ToList();
         var claimed = new List<WorkerCommandRow>();
         foreach (var id in ids)
         {
             await conn.ExecuteAsync(
-                "UPDATE worker_commands SET lease_until = @leaseUntil WHERE id = @id",
-                new { leaseUntil, id }, tx);
+                "UPDATE worker_commands SET lease_until = @LeaseUntilMs WHERE id = @id",
+                new { LeaseUntilMs = leaseUntil, id }, tx);
         }
         if (ids.Count > 0)
         {
@@ -338,12 +346,14 @@ public sealed class WorkerStore : IWorkerStore
         return claimed;
     }
 
-    public async Task<int> PendingCountAsync(string workerId)
+    public async Task<int> PendingCountAsync(string workerId, long now)
     {
         await using var conn = _db.Open();
+        // Same predicate as ClaimAsync: an expired lease is pending again (the crashed spoke's
+        // command must not read as zero).
         var n = await conn.ExecuteScalarAsync<long>(
-            "SELECT COUNT(1) FROM worker_commands WHERE worker_id = @workerId AND lease_until IS NULL AND result_ok IS NULL",
-            new { workerId });
+            "SELECT COUNT(1) FROM worker_commands WHERE worker_id = @workerId AND (lease_until IS NULL OR lease_until <= @NowMs) AND result_ok IS NULL",
+            new { workerId, NowMs = now });
         return (int)n;
     }
 

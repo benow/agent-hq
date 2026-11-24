@@ -12,9 +12,10 @@ public sealed record CheckResult(string Name, bool Passed, string Detail);
 /// The Agent HQ v1 spoke-conformance kit (plan 03 "the package"). Any hub implementation
 /// runs this against its real composition: it registers a fresh worker identity, then proves
 /// the contract's load-bearing rules — header enforcement, own-id scoping, the three-case
-/// ordering rule, lease redelivery inputs, result dedupe with the hash formula, snapshot
+/// ordering rule, the claim lease field, result dedupe with the hash formula, snapshot
 /// ownership conflict, the heartbeat shape, and the CI ingest shape. The hub's own test
-/// suite runs it; a third-party hub can too.
+/// suite runs it; a third-party hub can too. (Lease *expiry* redelivery is a timing property
+/// the kit cannot wait 60 s for; the hub's own suite proves it by backdating the lease.)
 /// </summary>
 public static class AgentHqConformance
 {
@@ -117,6 +118,9 @@ public static class AgentHqConformance
             }
             else
             {
+            Record("command-lease.field",
+                envelope.leaseUntil is { } lease && lease > DateTimeOffset.UtcNow,
+                $"leaseUntil {envelope.leaseUntil?.ToString("O") ?? "null"}");
             var okHash = AgentHqClient.ResultHash(ok: true, null);
             var ack1 = await PostResultAsync(client, workerId, envelope.commandId, ok: true, null, okHash, ct);
             var ack2 = await PostResultAsync(client, workerId, envelope.commandId, ok: true, null, okHash, ct);

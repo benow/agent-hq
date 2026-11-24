@@ -84,7 +84,7 @@ public sealed class WorkerService
         var worker = await _workers.GetByIdAsync(workerId)
                      ?? throw new InvalidOperationException($"unknown worker {workerId}");
         await _workers.TouchHeartbeatAsync(workerId, spokeVersion, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-        return new HeartbeatResponse(worker.LastAcceptedSeq, await _workers.PendingCountAsync(workerId),
+        return new HeartbeatResponse(worker.LastAcceptedSeq, await _workers.PendingCountAsync(workerId, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()),
             HubVersion, AgentHqContract.Version);
     }
 
@@ -115,7 +115,7 @@ public sealed class WorkerService
                 lastHeartbeat = w.LastHeartbeat,
                 capabilities = caps.Select(c => new { kind = c.kind, fields = c.fields }),
                 repositories = repos.Select(r => r.RepoName),
-                commandsPending = await _workers.PendingCountAsync(w.Id)
+                commandsPending = await _workers.PendingCountAsync(w.Id, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
             });
         }
         return list;

@@ -21,6 +21,16 @@ Since part 1 of [docs/plans/distributed-agent-hq](../../docs/plans/distributed-a
   across parallel test classes.
 - **`IAgentHqConnectionFactory`** (`AgentHqDb` / `AgentHqPgDb`) is what `ExchangeService` gets;
   it opens connections and runs that provider's DbUp migration set.
+- **SQLite: name time parameters with a unit (`@NowMs`), never `@now`/`@leaseUntil`.** These
+  sit next to keyword-named columns (`lease_until`) and bound unpredictably: on 2026-11-23
+  `ClaimAsync`'s anonymous `{ workerId, now, max }` — with `@NowMs` in the SQL — ran, wrote a
+  lease of `now + 60 s` to the claimed row, but matched the wrong rows; with a later literal
+  it matched correctly. Renaming every parameter in the claim to `@NowMs`/`@LeaseUntilMs`
+  fixed it and both halves of the lease then behaved. The trigger is not fully pinned down
+  (`@now` alone was not enough to reproduce it in isolation), so the rule is mechanical: in
+  any store SQL that mentions `lease_until` or another keyword-named column, use
+  unit-suffixed parameter names and assert the effect (rows touched, column written), not
+  just the returned value.
 - **Two migration sets**: `Migrations/*.sql` (SQLite, spoke) and `Migrations.Pg/*.sql` (hub,
   journaled in `AgentHqPgSchemaVersions`). Never share one file between dialects; never edit
   an applied one in either set. `AgentHqPgDb.Migrate` filters the assembly's embedded scripts
@@ -178,6 +188,17 @@ are normalised before comparison; keep it that way or `/foo` will match `/foobar
   COMMITTED) and both apply; the key makes the loser skip. Cursor updates use `MAX` /
   `GREATEST` so a losing batch can never rewind the winner's cursor, and the response's
   `nextExpected` is re-read from the row after the update.
+- **The command lease has two sides; the claim query must honour both.** `ClaimAsync` takes
+  `now` and selects `lease_until IS NULL OR lease_until <= @NowMs` (both stores). Selecting only
+  `IS NULL` strands a crashed spoke's command forever — the 60 s lease never redelivers. Any
+  test of the claim must cover both: leased envelopes withheld before expiry, and redelivered
+  after (backdate the column; never sleep 60 s). **Name those parameters `@NowMs` /
+  `@LeaseUntilMs`, never `@now` / `@leaseUntil`** — see the SQLite binding trap above: the old
+  names made the claim write the wrong rows.
+- **`PendingCountAsync` counts queued (un-leased) envelopes, per the contract** — and therefore
+  counts an *expired* lease as pending. A live lease is leased, not queued, so it is 0. Getting
+  this backwards is easy (both halves of the lease are about the same column): the contract
+  line is `03-contract.md`'s heartbeat route, "counts queued (un-leased) envelopes".
 - `worker_repos.repo_name` is UNIQUE — ownership exclusivity is a database fact, not just a
   service check; `ApplySnapshotAsync` and `SetReposAsync` (registration) re-check inside
   their transaction and return the other worker's id so the route answers 409, never a 500.

@@ -66,7 +66,9 @@ public interface IWorkerStore
     /// <summary>Claims up to <paramref name="max"/> queued (un-leased, no result) envelopes
     /// and sets the lease; returns them with LeaseUntil set.</summary>
     Task<IReadOnlyList<WorkerCommandRow>> ClaimAsync(string workerId, long now, long leaseUntil, int max);
-    Task<int> PendingCountAsync(string workerId);
+    /// <summary>Un-finished envelopes a claim would return right now: un-leased or past
+    /// <paramref name="now"/>. Must share ClaimAsync's predicate or a crashed lease reads as zero.</summary>
+    Task<int> PendingCountAsync(string workerId, long now);
     /// <summary>Records the first result; false when a result already exists (idempotent by
     /// commandId, rule 4 — the caller warns on a divergent hash instead of re-applying).</summary>
     Task<bool> TrySaveResultAsync(string id, bool ok, string? error, string resultHash, long finishedAt);
