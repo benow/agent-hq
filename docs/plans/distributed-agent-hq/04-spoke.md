@@ -138,6 +138,11 @@ directly. Rollback (hub mode) restores everything, unchanged.
 10. Lazy gate: with no spoke on loopback, a `/plan` command emits the install guidance
     and writes nothing anywhere; with the spoke up and the hub stopped, prompting is
     never blocked and the outage is visible on the spoke's presence, not in the hook.
+11. Actor passthrough to history: a plan command forwarded from the hub writes the synced
+    history row naming the ORIGINAL session id / identity as `actor`, with the worker
+    recorded as `transportedBy` — spot-check query recorded as evidence. *(Moved here
+    2026-11-22 from part 3's criterion 6: the hub never applies a command, so this is the
+    first part where such a history row exists.)*
 
 ## Documentation
 
@@ -162,3 +167,9 @@ directly. Rollback (hub mode) restores everything, unchanged.
   (Andy: stability errors must not be silent). No repository-tree configuration exists in
   this design — participation is hub-side registration plus the machine-level spoke,
   settled in the same session.
+
+- 2026-11-22 — Criterion 11 added, moved from part 3's criterion 6 during part 3's
+  verification. Part 3 merges events and stores projections but never applies a command,
+  so "a history row written via a forwarded command" had no path there; the history-row
+  actor check belongs to the part that first executes a forwarded command. No other change
+  to this plan.

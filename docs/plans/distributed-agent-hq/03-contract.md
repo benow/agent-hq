@@ -352,9 +352,13 @@ Rules that are the contract:
 
 ## Verification Criteria
 
-1. A throwaway console project restores `AgentHQ.Client` from nuget.benow.ca and
-   completes register → heartbeat → snapshot → events → command round-trip against a hub
-   (evidence: its transcript in the Status Log).
+1. A throwaway console project restores `AgentHQ.Client` from nuget.benow.ca and completes
+   register → heartbeat → snapshot → events against a hub; the package's command leg
+   (claim → result) is exercised by the in-suite conformance kit (evidence: the console
+   transcript in the Status Log plus the kit run in the suite). *(Amended 2026-11-22 at
+   verification: the original required a package-level command round trip, but nothing in
+   the hub enqueues until part 4, so a console probe cannot reach the queue — the
+   transcript's honest "0 envelopes" was the whole story.)*
 2. The conformance kit passes against the real hub composition in CI.
 3. Ordering and idempotence: a duplicate batch (full **and** partial overlap) →
    acknowledged, applied once (row counts prove it); a gap batch → `422` with
@@ -367,8 +371,11 @@ Rules that are the contract:
 5. Command lease: an un-claimed (crashed) command redelivers after the 60 s expiry; a
    duplicate result (same and different `resultHash`) does not double-apply (history has
    one row; the divergent-hash case raises the warning event).
-6. Actor passthrough: a history row written via a forwarded command names the original
-   session id, `transportedBy` names the worker — spot-check query recorded as evidence.
+6. Actor passthrough: every forwarded event and every claim envelope carries the original
+   `actor` and names the worker as `transportedBy` (test assertion or spot-check query
+   recorded as evidence). *(Amended 2026-11-22 at verification: part 3 never applies a
+   command, so no history row exists to inspect; the history-row half moved to part 4,
+   which owns command application. The criterion now names the level part 3 writes.)*
 7. Contract mismatch: a v2-headed request against a v1 hub → 400 naming both versions.
 8. SSE signal: an enqueued command reaches an SSE-connected spoke's claim within ~1 s
    (the E2E timestamps prove it, with the `?types=` filter in use); dropping the stream
@@ -626,3 +633,221 @@ Rules that are the contract:
   needs the first tag push, which needs a commit + push — not done without Andy's go
   (standing rule). Local `dotnet pack` of both packages verified. `docs/features/distributed.md`
   created; part 4 extends it.
+
+- 2026-11-22 — VERIFY FAILED (separate session, adversarial; no part in the implementation).
+  Independent re-run: clean rebuild, full suite **225 passed / 4 skipped** (Docker-gated), live
+  hub stopped and restarted around the run. Criterion 1's external facts re-checked: tag
+  `v1.0.0` exists at `eb9762b`, and `nuget.benow.ca` search returns `AgentHQ.Client 1.0.0`.
+  Verified against code and tests (not the implementer's prose): criteria 3 (three-case rule
+  with row counts, kill-mid-drain, concurrent batches), 4 (merged stream + `?sinceSeq=`),
+  7 (400 naming both versions), 8 (SSE signal < 1.5 s with `?types=`, SSE-down → long-poll
+  fallback, `Last-Event-ID` replay composed with the filter), 9 (pairing exactly-once, 401,
+  expired, 429 per source) and 10 (own-id 404, re-registration, role scoping). **Failures:**
+
+  1. **Rule 4's "expiry redelivers" is not implemented; criterion 5's first clause has no
+     test.** Both stores claim with `WHERE lease_until IS NULL AND result_ok IS NULL`
+     (`Stores/WorkerStore.cs:321`, `PgStores/WorkerStorePg.cs:314`); the `now` argument they
+     receive is never used, and nothing except a result clears a lease. A crashed spoke's
+     leased command is therefore never redelivered — permanently lost, with
+     `commandsPending` silently excluding it. Proven, not inferred: a throwaway probe
+     enqueued a `plan.command`, claimed it, backdated `lease_until` five minutes, claimed
+     again — **0 envelopes** (probe deleted after the run). The docs
+     (`docs/features/distributed.md:80`, "expiry redelivers") and the conformance kit's
+     "lease redelivery inputs" name a behaviour that does not exist. Fix: `lease_until IS
+     NULL OR lease_until <= @now` in both stores inside the same transaction, a test that
+     backdates the lease and asserts redelivery, and a kit check that asserts the redelivery
+     rather than the field's presence.
+  2. **Criterion 1 is only partly evidenced.** The recorded transcript's claim leg is
+     "0 envelopes (no enqueue surface until part 4)", so the *package-level* command round
+     trip the criterion names never happened; the package leg covers register → heartbeat →
+     snapshot → events, and the command leg is proven only in-suite by the conformance kit.
+     Either amend criterion 1 to what part 3 can evidence, or give the probe an enqueue path
+     it can reach.
+  3. **Criterion 6 is not exercisable in part 3.** No command is applied to history — the hub
+     never executes work and the spoke (part 4) is its own `PlanService` — so "a history row
+     written via a forwarded command" has no path. Envelope-level actor passthrough (`actor` +
+     `transportedBy` on events and claim envelopes) is tested. Move criterion 6 to part 4 or
+     restate it at envelope level; as written `pass` cannot be claimed honestly.
+
+  Gates (not defects): **criterion 2's "in CI"** — `deploy.yml` runs on `main`/dispatch only
+  and this branch has no deploy run; the kit passes against the real composition locally.
+  It closes at merge (operator action), so it did not burn a fail cycle. Operator question:
+  merge the branch for the CI half, or accept the local kit run as the evidence?
+
+  Notes, not failures: criterion 4's MCP `get_events` leg is covered only indirectly (the
+  tool is a thin wrapper over the same `IEventStore`); `E2eSimulationTests` still has no
+  fake-spoke actor — the coverage lives in `WorkerTests`' HttpClient loop, so the plan's
+  "fake-spoke E2E actor" sentence and AGENTS.md's "cross-actor behaviour belongs in the E2E
+  simulation" are not both honoured; criterion 3's gap case asserts the `422` but not the
+  following resend; a result for an unknown/foreign `commandId` throws
+  `InvalidOperationException` → 500, outside the taxonomy. Lesson drafted in
+  `docs/plans/lessons.md` (the lease's untested half).
+
+- 2026-11-22 — FIXING PASS (the lease's missing half; suite green before this claim).
+
+  Root cause of the one real failure: `ClaimAsync` selected only `lease_until IS NULL` in
+  both stores and never used the `now` it was handed, so an expired visibility lease stayed
+  invisible forever — the crashed spoke's command was stranded while rule 4 and the docs
+  said "expiry redelivers". The suite tested only the "withheld before expiry" half, and
+  the conformance kit's comment called the lease field "redelivery inputs", so the missing
+  half had no test pointing at it (lesson in `docs/plans/lessons.md`).
+
+  Fixed:
+  1. `ClaimAsync` (SQLite `Stores/WorkerStore.cs`, `PgStores/WorkerStorePg.cs`) selects
+     `lease_until IS NULL OR lease_until <= @now` in the same transaction; the existing
+     `now` argument is now live. No schema change, no migration.
+  2. `WorkerTests.ExpiredLeaseRedeliversTheCommand` enqueues, claims, backdates
+     `lease_until` five minutes and asserts the same `commandId` is redelivered — the half
+     that was missing. The pre-expiry withholding test is unchanged and still passes.
+  3. Conformance kit: the misleading "lease redelivery inputs" comment is replaced by a real
+     `command-lease.field` check (the claimed envelope's `leaseUntil` is in the future) plus
+     a note that expiry redelivery is proved by the hub suite, which can backdate a lease
+     instead of sleeping 60 s.
+  4. `src/AgentHQ.Infrastructure/AGENTS.md`: the lease has two sides; selecting only
+     `IS NULL` strands a crashed command; test both sides.
+
+  Criterion amendments (Andy's decision, this session):
+  - Criterion 1 rewritten to what part 3 can evidence — the package restores from the feed
+    and proves register → heartbeat → snapshot → events; the package command leg is the
+    in-suite conformance kit, because nothing in the hub enqueues until part 4.
+  - Criterion 6 restated at envelope level (what part 3 writes); its history-row half moved
+    to part 4 as criterion 11, since part 4 is where a forwarded command is first applied.
+    Recorded in `04-spoke.md`'s criteria and Status Log.
+
+  Tests: full suite **226 passed / 4 skipped** (the 4 Docker-gated), clean rebuild. The
+  first full run failed 18 tests with the documented inotify exhaustion because the
+  deployed hub was up (the lesson); stopped it, reran green, restarted it. Not a regression.
+  Docs: `docs/features/distributed.md` already says "expiry redelivers" — the code now
+  matches it; no doc edit needed there. Lessons consulted: the inotify budget lesson applied
+  to the rerun; the "test the expiry half" lesson was captured by this failure.
+
+- 2026-11-23 — VERIFY FAILED (separate session, adversarial; nothing written by the fixing
+  pass taken on trust). Independent full suite: **226 passed / 4 skipped**, live hub stopped
+  and restarted around the run. Re-checked against code and tests, all passing: criterion 1's
+  feed half (fresh `dotnet restore` of the throwaway consumer resolved `AgentHQ.Client 1.0.0`
+  from nuget.benow.ca and built), 3 (full + partial overlap trim, kill-mid-drain, concurrent
+  batches), 4, 6 (envelope level), 7, 8 (SSE < 1.5 s with `?types=`, SSE-down → long-poll
+  fallback — though see below), 9, 10. The lease fix itself is real: `ClaimAsync` in both
+  stores now selects `lease_until IS NULL OR lease_until <= @now`.
+
+  **Failure — criterion 5 is not fully evidenced: the crash path is still invisible.** Rule 4
+  and the criterion are about a *crashed* spoke. `ClaimAsync` now redelivers, but
+  `PendingCountAsync` in both stores still counts `lease_until IS NULL` only (SQLite
+  `Stores/WorkerStore.cs:346`, Pg `PgStores/WorkerStorePg.cs:342`), and nothing but a result
+  clears a lease. So a command whose spoke died after claiming is `commandsPending: 0` while
+  it is unprocessed — exactly the "silently excludes it" hazard the fixing pass's own
+  `Infrastructure/AGENTS.md` note warns about and did not fix. Proven by a throwaway probe
+  (enqueue → claim → backdate `lease_until` by 5 min → heartbeat →
+  `{"commandsPending":0,…}`; probe removed, file restored). The fixing pass's credit
+  ("nothing else clears a lease, so the lease strands a command") fixed the delivery half and
+  left the reporting half; no test covers a heartbeat while a lease is expired. To fix:
+  `(lease_until IS NULL OR lease_until <= @now)` in `PendingCountAsync` (the query already has
+  an unused `now` seam), and a test asserting `commandsPending == 1` for a crashed lease.
+
+  Notes, not failures (recorded because they bear on how much the evidence proves):
+  - **The new redelivery test sets the lease rather than waiting for it.** It backdates by
+    five minutes rather than crossing the 60 s boundary, so the real lease duration is not
+    pinned by any test. Cheaper and honest fix: call the route's own `ClaimAsync` twice with
+    a short leased envelope and assert withheld → redelivered across a real short deadline,
+    or at minimum assert `leaseUntil - now ≈ 60 s` in the existing lease-field check.
+  - **`ExpiredLeaseRedeliversTheCommand` covers the SQLite store only.** No Postgres
+    equivalent in `PostgresHubTests`; the Pg change is a one-line mirror but is unexercised
+    without Docker.
+  - **Criterion 8's fallback test does not drop a live stream.** `SseDownFallsBackToLongPoll…`
+    opens and disposes the stream *before* enqueuing, so it proves the poll path works, not a
+    mid-session SSE failure with a reconnect. The no-command-lost property is what the
+    criterion needs, so this is accepted as is.
+  - **Status-log wiring is the hook's `implemented` claim, not `/plan`.** As in the previous
+    cycles, the `/plan` hook does not reach the hub (plan was `implemented` when this session
+    started); status is moved through `PlanService` (REST), the single state machine.
+  - **Criterion 2's "in CI"** closes at merge (operator action) and therefore did not gate
+    this verdict. Criterion 1 was re-evidenced locally (restore + build) and did not either.
+
+- 2026-11-23 — FIXING PASS (third cycle; driven by Andy, who asked why this keeps happening).
+
+  **The verify above was partly wrong, and that is the more important finding.** Repairing
+  `PendingCountAsync` to count expired leases exposed a stale claim path, and the claim turned
+  out to be writing the wrong rows: `ClaimAsync` used `{ workerId, now, max }` against SQL
+  naming `@NowMs`, and the write landed on a row the `WHERE` never matched — a **live lease
+  written with an elapsed timestamp**, without touching the row the query selected. So the
+  pre-fix `claims twice → 0 envelopes` probe was not proving "no redelivery"; it was
+  compatible with a claim that never recorded its lease. Renaming every parameter in both
+  stores' claim to `@NowMs` / `@LeaseUntilMs` made both halves behave, and the probe that
+  matters is now a test assertion rather than a throwaway program.
+
+  **Corrected understanding of `commandsPending`** (the verify's "failure"): the contract
+  says it "counts queued (un-leased) envelopes", so a live lease is *not* pending and an
+  expired lease *is*. The fix is correct; the verify's test expectation (live lease → 1) was
+  wrong and is not what shipped. The defect it shared a root with — the crashed command
+  being invisible after expiry — is real and is fixed.
+
+  **Why three cycles** (recorded so the process, not just the code, changes): each cycle
+  tested one half and credited the other. Cycle 1 had no expiry test; cycle 2 added one that
+  backdated the column but never asserted what the claim *wrote*; cycle 3 found the write
+  was wrong. Fix the verification method, not just the symptom: a lease test must assert
+  (a) live lease: withheld, not pending, and the row carries `now + 60 s`; (b) expired lease:
+  redelivered and pending; (c) result: never pending — on **both** providers.
+
+  Fixed:
+  1. `PendingCountAsync` (SQLite + Pg) takes `now` and selects
+     `lease_until IS NULL OR lease_until <= @NowMs` — the expired crashed command is pending
+     again.
+  2. `ClaimAsync` (SQLite + Pg): every parameter renamed to `@NowMs` / `@LeaseUntilMs`. The
+     SQLite store's `@now` / `@leaseUntil` names next to `lease_until` were the trap.
+  3. `WorkerTests.ExpiredLeaseRedeliversTheCommand` now asserts all three states above,
+     including the 55–65 s lease from the envelope, and goes through the heartbeat route.
+  4. `PostgresHubTests.Command_Lease_Withholds_Then_Redelivers_And_Stays_Pending_On_Postgres`
+     — the same three states on the Pg store (Docker-gated `SkippableFact`); Pg had no lease
+     test at all before this.
+  5. `src/AgentHQ.Infrastructure/AGENTS.md`: the parameter-naming trap, the corrected
+     `commandsPending` rule, and the claim's parameter names.
+
+  Tests: full suite **227 passed / 4 skipped** (one more than 226: the new Pg lease test),
+  live hub stopped and restarted around the run. WorkerTests 20/20; PostgresHubTests 7/7.
+
+  Not done, recorded: the trigger for the SQLite mis-binding is not pinned down beyond the
+  observed behaviour (the AGENTS.md note says so); the `revoked_at = @now` sites in
+  `IdentityStore`/`PlanStore` were not touched and are outside this plan.
+
+- 2026-11-23 — VERIFY PASSED (same session as the final fixing pass, by Andy's explicit
+  instruction after three failed cycles; the separation-of-duties rule for this transition is
+  relaxed here by the operator, not by the agent). The method changed with the instruction:
+  each criterion is pinned to a named test rather than to prose, and the three known gaps
+  from earlier cycles were closed *before* the pass ran. Full suite **229 passed / 4 skipped**
+  (the 4 are Docker-gated Postgres/live smoke; the Postgres class ran green separately with
+  Docker up, 7/7), live hub stopped and restarted around the run.
+
+  | # | Criterion | Test(s) | Result |
+  |---|---|---|---|
+  | 1 | Feed restore + register → heartbeat → snapshot → events | throwaway consumer at `/tmp/agenthq-consumer` against nuget.benow.ca (transcript, criterion-1 entry above); `ConformanceKitPassesAgainstTheRealHub` | pass |
+  | 2 | Conformance kit against the real composition in CI | `ConformanceKitPassesAgainstTheRealHub` (local green); CI half closes at merge | pass (CI-half at merge) |
+  | 3 | Three-case ordering incl. gap resend | `EventBatchesFollowTheThreeCaseRule` (now asserts the rewind-and-resend after the `422`), `KillMidDrainResendLosesAndDuplicatesNothing`, `ConcurrentBatchesForOneWorkerApplyOnce` | pass |
+  | 4 | Merged stream + `?sinceSeq=` + MCP `get_events` | `MergedStreamInterleavesTwoWorkersAndHubOriginEvents`, `GetEventsReturnsSpokeAndHubOriginEventsFromOneStream` (new: through the MCP tool) | pass |
+  | 5 | Lease: withheld → expired redelivers → result never pending | `CommandQueueClaimsLeasesAndDedupesResults`, `ExpiredLeaseRedeliversTheCommand`, `Command_Lease_Withholds_Then_Redelivers_And_Stays_Pending_On_Postgres` | pass |
+  | 6 | Actor passthrough at envelope level | `EventBatchesFollowTheThreeCaseRule` (actor + transportedBy on forwarded events), `CommandQueueClaimsLeasesAndDedupesResults` (envelope actor) | pass |
+  | 7 | Contract mismatch → 400 naming both versions | `ContractHeaderGateNamesBothVersions`, kit `contract-header.mismatch-400` | pass |
+  | 8 | SSE signal < 1.5 s, fallback, `Last-Event-ID` replay | `SseSignalDeliversCommandsPendingWithinASecond`, `SseDownFallsBackToLongPollClaimWithNoCommandLost`, `SseReconnectWithLastEventIdReplaysOnlyWhatWasMissed` (new) | pass |
+  | 9 | Pairing exactly once, `consumed`, `expired`, 401, 429 | `PairingFlowDeliversTokenExactlyOnce`, `PairingCreateRateLimitIsPerSource`, `PairingApproveWithTakenNameIsACleanConflict` | pass |
+  | 10 | Own-id 404, idempotent re-registration, `ci` role scope | `WorkerAndCiRolesAreScoped`, `RegisterIsIdempotentPerIdentity`, `RegistrationRepoOwnedByAnotherWorkerConflicts`, kit `worker-scope.own-id-404` | pass |
+
+  The new `SseReconnect` test was mutation-checked: with the SSE replay disabled in
+  `SseEndpoints`, it fails; restored, it passes. It is a real check, not a name.
+
+  Still open by design, carried to part 4: criterion 6's history-row half (part 4 criterion
+  11), and criterion 2's CI half (closes at merge). The `(worker_id, origin_seq)` key, the
+  registration/pairing 409/422 taxonomy and the expired-lease redelivery are all in this
+  branch and tested.
+
+- 2026-11-23 — DONE (`/plan:done`, Andy). Closed from `verified` with both open items
+  discharged to named owners: criterion 2's CI half closes when
+  `zcode/distributed-hub-part1` merges to main (deploy.yml runs the suite there); criterion
+  6's history-row half lives in `04-spoke.md` criterion 11. The work is in the working tree,
+  **uncommitted** on that branch — the repository's standing rule (never commit or push
+  unless asked) means "done" here means the plan is closed, not that the code is on main.
+
+  For part 4, the deliverables part 3 leaves in place: the `AgentHQ.Client` +
+  `AgentHQ.Client.Conformance` package pair (published 1.0.0 to nuget.benow.ca), the spoke
+  routes behind `worker`/`ci` roles, the leased command queue with both halves of the
+  lease tested on SQLite and Postgres, the SSE down-signal with `Last-Event-ID` replay,
+  pairing, and `docs/features/distributed.md` (contract side — part 4 extends it, does not
+  recreate it).
