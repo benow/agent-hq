@@ -35,6 +35,13 @@ Since part 1 of [docs/plans/distributed-agent-hq](../../docs/plans/distributed-a
   journaled in `AgentHqPgSchemaVersions`). Never share one file between dialects; never edit
   an applied one in either set. `AgentHqPgDb.Migrate` filters the assembly's embedded scripts
   to the `.Migrations.Pg.` prefix — the SQLite scripts are embedded in the same assembly.
+- **`AgentHQ.Client` is a PackageReference in `AgentHQ.Api` and `AgentHQ.Infrastructure`, not a
+  ProjectReference.** The Dockerfile builds the hub from a trimmed source tree, so a project
+  reference fails there even though it builds locally — and a package reference needs
+  `nuget.config` copied into the image or only nuget.org is searched (`NU1101`). Both traps
+  shipped to `main` on 2026-11-23 and only CI caught them: **build the image locally before
+  merging a change to any csproj** (`docker build -t agent-hq:check -f Dockerfile .`). Bump the
+  package version in both csprojs together with the contract.
 - **Npgsql traps that differ from SQLite** (learned porting the stores):
   - Dapper's automatic `IN @list` expansion emits positional syntax Npgsql rejects
     (`42601`) — expand lists into named parameters explicitly in Pg stores.

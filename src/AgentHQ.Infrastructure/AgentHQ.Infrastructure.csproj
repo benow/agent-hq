@@ -8,7 +8,11 @@
     <PackageReference Include="Serilog" Version="4.2.0" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="../AgentHQ.Client/AgentHQ.Client.csproj" />
+    <!-- As a package, not a ProjectReference: this project ships to the private feed and a
+         project reference would embed the path to a sibling checkout. The image build uses
+         AgentHQ.Client as a project (Dockerfile); a source build without it restores this
+         package from nuget.benow.ca. Bump the version when the contract changes. -->
+    <PackageReference Include="AgentHQ.Client" Version="1.0.0" />
     <ProjectReference Include="../AgentHQ.Core/AgentHQ.Core.csproj" />
     <ProjectReference Include="../AgentHQ.Models/AgentHQ.Models.csproj" />
   </ItemGroup>

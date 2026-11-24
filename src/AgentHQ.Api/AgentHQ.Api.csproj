@@ -12,9 +12,12 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../AgentHQ.Core/AgentHQ.Core.csproj" />
-    <!-- The hub implements the wire contract, so it binds the client package's DTOs
-         (plan 03: ProjectReference while developing; the feed is criterion 1's exercise). -->
-    <ProjectReference Include="../AgentHQ.Client/AgentHQ.Client.csproj" />
+    <!-- The hub implements the wire contract, so it binds the client package's DTOs. As a
+         package, not a ProjectReference: a source build without the Client project present
+         restores it from nuget.benow.ca instead of failing (plan 03's bootstrapping order was
+         ProjectReference-first and broke the container image — the same defect class the
+         Dockerfile's missing COPY exposed). Bump the version with the contract. -->
+    <PackageReference Include="AgentHQ.Client" Version="1.0.0" />
     <ProjectReference Include="../AgentHQ.Infrastructure/AgentHQ.Infrastructure.csproj" />
     <ProjectReference Include="../AgentHQ.Providers.ZCode/AgentHQ.Providers.ZCode.csproj" />
     <ProjectReference Include="../AgentHQ.Commands.ZCode/AgentHQ.Commands.ZCode.csproj" />

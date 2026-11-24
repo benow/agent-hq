@@ -2,7 +2,7 @@
 # deploy script's container mode (scripts/agent-hq-deploy.sh container) — one deploy path.
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
-COPY AgentHQ.slnx Directory.Build.props ./
+COPY AgentHQ.slnx Directory.Build.props nuget.config ./
 COPY src/AgentHQ.Core src/AgentHQ.Core
 COPY src/AgentHQ.Models src/AgentHQ.Models
 COPY src/AgentHQ.Infrastructure src/AgentHQ.Infrastructure
