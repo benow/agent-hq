@@ -4,9 +4,11 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using AgentHQ.Client;
 using AgentHQ.Client.Conformance;
+using AgentHQ.Infrastructure;
 using AgentHQ.Infrastructure.Events;
 using AgentHQ.Infrastructure.Services;
 using AgentHQ.Infrastructure.Stores;
+using Dapper;
 using Microsoft.AspNetCore.TestHost;
 using Xunit;
 
@@ -157,10 +159,16 @@ public class WorkerTests(WorkerFixture app) : IClassFixture<WorkerFixture>
         Assert.Equal(HttpStatusCode.UnprocessableEntity, status);
         Assert.Equal(5, expected);
 
-        // row-count proof: exactly 4 spoke events landed (2 applied + 2 tail; the duplicates trimmed)
+        // the spoke rewinds to the expected cursor and resends: no loss, no duplication
+        var recovered = await SendAsync(client, workerId, expected!.Value, expected!.Value);
+        Assert.True(recovered.Ack is { accepted: true });
+        Assert.Equal(expected.Value + 1, recovered.Ack!.nextExpected);
+
+        // row-count proof: exactly 5 spoke events landed (2 applied + 2 tail + the resent one;
+        // the duplicates trimmed)
         var merged = await app.Get<IEventStore>().ReadSinceAsync(seqBefore);
         var spokeRows = merged.Where(e => e.Type == "plan.status_changed").ToList();
-        Assert.Equal(4, spokeRows.Count);
+        Assert.Equal(5, spokeRows.Count);
 
         // actor passthrough (rule 1): payloads keep the original actor and name the worker
         foreach (var e in spokeRows)
@@ -373,6 +381,54 @@ public class WorkerTests(WorkerFixture app) : IClassFixture<WorkerFixture>
     }
 
     [Fact]
+    public async Task ExpiredLeaseRedeliversTheCommand()
+    {
+        var (client, _, workerId, _, repo) = await NewWorkerAsync();
+        var queue = app.Get<CommandQueueService>();
+        var commandId = await queue.EnqueueAsync("health.check", repo, "sess_crashed",
+            JsonSerializer.SerializeToElement(new { check = "runners" }, Json));
+
+        var claimedAt = DateTimeOffset.UtcNow;
+        var first = await client.GetFromJsonAsync<JsonElement>($"/workers/{workerId}/commands?wait=0", Json);
+        Assert.Equal(commandId, first.GetProperty("commands")[0].GetProperty("commandId").GetString());
+
+        // The lease the contract pins: 60 s, in the future.
+        var leaseUntil = first.GetProperty("commands")[0].GetProperty("leaseUntil").GetDateTimeOffset();
+        var leaseSeconds = (leaseUntil - claimedAt).TotalSeconds;
+        Assert.InRange(leaseSeconds, 55, 65);
+
+        // While the lease is live the envelope is leased, not queued: rule 4's heartbeat rule
+        // counts "queued (un-leased)" only, so it is neither pending nor redelivered.
+        var live = await PostJsonAsync(client, $"/workers/{workerId}/heartbeat", new { version = "1" });
+        Assert.Equal(0, live.GetProperty("commandsPending").GetInt32());
+        var leaked = await client.GetFromJsonAsync<JsonElement>($"/workers/{workerId}/commands?wait=0", Json);
+        Assert.Equal(0, leaked.GetProperty("commands").GetArrayLength());
+
+        // The spoke died holding it. Past the deadline the hub must redeliver it (rule 4,
+        // "expiry redelivers") and report it as pending again. Backdating by a second
+        // simulates crossing the real 60 s boundary; no test waits a minute.
+        var db = new AgentHqDb(app.AgentHqDbPath);
+        await using (var conn = db.Open())
+            await conn.ExecuteAsync(
+                "UPDATE worker_commands SET lease_until = @past WHERE id = @id",
+                new { past = DateTimeOffset.UtcNow.AddSeconds(-1).ToUnixTimeMilliseconds(), id = commandId });
+        var crashed = await PostJsonAsync(client, $"/workers/{workerId}/heartbeat", new { version = "1" });
+        Assert.Equal(1, crashed.GetProperty("commandsPending").GetInt32());
+
+        var redelivered = await client.GetFromJsonAsync<JsonElement>($"/workers/{workerId}/commands?wait=0", Json);
+        var commands = redelivered.GetProperty("commands");
+        Assert.Equal(1, commands.GetArrayLength());
+        Assert.Equal(commandId, commands[0].GetProperty("commandId").GetString());
+
+        // A finished command is never pending, whatever its lease says.
+        await PostJsonAsync(client, $"/workers/{workerId}/commands/{commandId}/result",
+            new { commandId, ok = true, error = (string?)null, resultHash = AgentHqClient.ResultHash(true, null),
+                finishedAt = DateTimeOffset.UtcNow });
+        var done = await PostJsonAsync(client, $"/workers/{workerId}/heartbeat", new { version = "1" });
+        Assert.Equal(0, done.GetProperty("commandsPending").GetInt32());
+    }
+
+    [Fact]
     public async Task EnqueueWithoutAnOwningWorkerRefuses()
     {
         var queue = app.Get<CommandQueueService>();
@@ -495,6 +551,59 @@ public class WorkerTests(WorkerFixture app) : IClassFixture<WorkerFixture>
         // Leased by the poll: nothing is redelivered to a second claim before expiry.
         var again = await client.GetFromJsonAsync<JsonElement>($"/workers/{workerId}/commands?wait=0", Json);
         Assert.Equal(0, again.GetProperty("commands").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task SseReconnectWithLastEventIdReplaysOnlyWhatWasMissed()
+    {
+        var (client, _, workerId, _, repo) = await NewWorkerAsync();
+        var queue = app.Get<CommandQueueService>();
+        var json = Dtos.Json;
+
+        // First connection: the spoke sees one signal, then the stream dies.
+        var first = await client.GetAsync("/events?types=commands.pending,release.available",
+            HttpCompletionOption.ResponseHeadersRead);
+        using (var reader = new StreamReader(first.Content.ReadAsStream()))
+        {
+            var signalTask = Task.Run(async () =>
+            {
+                while (true)
+                {
+                    var line = await reader.ReadLineAsync();
+                    if (line is null) return (long?)null;
+                    if (line.StartsWith("id: ") && long.TryParse(line[4..], out var id)) return id;
+                }
+            });
+            await queue.EnqueueAsync("health.check", repo, "sess_a",
+                JsonSerializer.SerializeToElement(new { check = "runners" }, json));
+            var seen = await signalTask.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.NotNull(seen);
+            first.Dispose();
+
+            // While the stream is down, two more commands are queued (two more signals).
+            await queue.EnqueueAsync("health.check", repo, "sess_b",
+                JsonSerializer.SerializeToElement(new { check = "runners" }, json));
+            await queue.EnqueueAsync("health.check", repo, "sess_c",
+                JsonSerializer.SerializeToElement(new { check = "runners" }, json));
+
+            // Reconnect naming the last id seen: exactly the two missed signals replay, no
+            // repeat of the one already handled (criterion 8's "replays nothing already seen").
+            using var reconnect = new HttpRequestMessage(HttpMethod.Get,
+                "/events?types=commands.pending,release.available");
+            reconnect.Headers.Add("Last-Event-ID", seen!.Value.ToString());
+            var second = await client.SendAsync(reconnect, HttpCompletionOption.ResponseHeadersRead);
+            using var reader2 = new StreamReader(second.Content.ReadAsStream());
+            var replayed = new List<long>();
+            while (replayed.Count < 2)
+            {
+                var line = reader2.ReadLine();
+                if (line is null) break;
+                if (line.StartsWith("id: ") && long.TryParse(line[4..], out var id)) replayed.Add(id);
+            }
+            Assert.Equal(2, replayed.Count);
+            Assert.DoesNotContain(seen!.Value, replayed);
+            Assert.All(replayed, id => Assert.True(id > seen!.Value));
+        }
     }
 
     // ---- collision taxonomy (fixing pass: operator-caused collisions are clean 4xx) ----

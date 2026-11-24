@@ -91,6 +91,43 @@ public class McpClientTests(AgentHQApp app) : IClassFixture<AgentHQApp>
         Assert.Contains("Goal", rdoc.RootElement.GetProperty("content").GetString());
     }
 
+    /// <summary>Criterion 4's MCP leg: a spoke-forwarded event and a hub-origin event land in
+    /// one merged seq space, and `get_events` returns both — the tool is a thin wrapper over the
+    /// same IEventStore, and this proves it on the path a project manager actually uses.</summary>
+    [Fact]
+    public async Task GetEventsReturnsSpokeAndHubOriginEventsFromOneStream()
+    {
+        await using var client = await ConnectAsync();
+        var store = app.Get<AgentHQ.Infrastructure.Events.IEventStore>();
+
+        // Hub-origin, then a spoke-forwarded row of the shape an ingest writes (workerId +
+        // originSeq + actor + transportedBy in the payload).
+        var hubOrigin = await store.AppendAsync("plan.updated", new { slug = "hub-origin" });
+        var spokeOrigin = await store.AppendAsync("plan.status_changed", new
+        {
+            workerId = "worker-x", originSeq = 7, actor = "sess_mcp", transportedBy = "spoke-x",
+            from = "refining", to = "in_review"
+        });
+
+        var events = await client.CallToolAsync("get_events", new Dictionary<string, object?>
+        {
+            ["sinceSeq"] = hubOrigin.Seq - 1, ["types"] = ""
+        });
+        using var doc = JsonDocument.Parse(Text(events));
+        var list = doc.RootElement.GetProperty("events").EnumerateArray().ToList();
+        var seqs = list.Select(e => e.GetProperty("seq").GetInt64()).ToList();
+        Assert.Equal(seqs.OrderBy(s => s).ToList(), seqs);                    // one ordered cursor space
+        Assert.Contains(hubOrigin.Seq, seqs);
+        Assert.Contains(spokeOrigin.Seq, seqs);
+        Assert.True(doc.RootElement.GetProperty("lastSeq").GetInt64() >= spokeOrigin.Seq);
+
+        // The forwarded row keeps its actor through the projection (payload arrives as JSON text).
+        var forwarded = list.Single(e => e.GetProperty("seq").GetInt64() == spokeOrigin.Seq);
+        using var pdoc = JsonDocument.Parse(forwarded.GetProperty("payload").GetString()!);
+        Assert.Equal("sess_mcp", pdoc.RootElement.GetProperty("actor").GetString());
+        Assert.Equal("spoke-x", pdoc.RootElement.GetProperty("transportedBy").GetString());
+    }
+
     private static string Text(CallToolResult result) =>
         string.Concat(result.Content.OfType<TextContentBlock>().Select(b => b.Text));
 }

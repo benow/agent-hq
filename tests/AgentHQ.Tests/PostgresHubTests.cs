@@ -194,4 +194,38 @@ public sealed class PostgresHubTests(PostgresFixture pg) : IClassFixture<Postgre
         // The answer is addressed back to the asking session; that is what its inbox must show.
         Assert.Contains(inbox, i => i.Id == answered.Item!.Id && i.State == Core.Exchange.ExchangeStates.Delivered);
     }
+
+    [SkippableFact]
+    public async Task Command_Lease_Withholds_Then_Redelivers_And_Stays_Pending_On_Postgres()
+    {
+        var connStr = await pg.NewDatabaseAsync();
+        var app = await StartAppAsync(connStr);
+        await app.RegisterRepositoryAsync();
+        var identity = await app.Get<AgentHQ.Infrastructure.Services.IdentityService>()
+            .CreateIdentityAsync("pg-spoke", "pw-pg-spoke", "worker");
+        var worker = await app.Get<AgentHQ.Infrastructure.Services.WorkerService>()
+            .EnsureForIdentityAsync(identity.Id);
+        var repo = "pg-owned-" + Guid.NewGuid().ToString("N")[..8];
+        await app.Get<AgentHQ.Infrastructure.Services.WorkerService>().RegisterAsync(worker.Id,
+            new AgentHQ.Client.RegisterRequest("pg-spoke", "pg-machine", "1.0.0",
+                [new AgentHQ.Client.Capability("plan-engine", repositories: [repo])]));
+
+        var queue = app.Get<AgentHQ.Infrastructure.Services.CommandQueueService>();
+        var commandId = await queue.EnqueueAsync("health.check", repo, "sess_crashed",
+            JsonSerializer.SerializeToElement(new { check = "runners" }));
+
+        // The store's predicate is the contract (the route layer is the same code on SQLite):
+        // live lease → withheld and not queued; expired lease → pending again and redelivered;
+        // result → never pending.
+        var store = app.Get<IWorkerStore>();
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var claimed = await store.ClaimAsync(worker.Id, now, now + 60_000, 10);
+        Assert.Equal(commandId, Assert.Single(claimed).Id);
+        Assert.Empty(await store.ClaimAsync(worker.Id, now + 1_000, now + 61_000, 10));
+        Assert.Equal(0, await store.PendingCountAsync(worker.Id, now + 1_000));
+        Assert.Equal(1, await store.PendingCountAsync(worker.Id, now + 61_000));
+        Assert.Equal(commandId, Assert.Single(await store.ClaimAsync(worker.Id, now + 61_000, now + 121_000, 10)).Id);
+        Assert.True(await store.TrySaveResultAsync(commandId, true, null, "h", now + 122_000));
+        Assert.Equal(0, await store.PendingCountAsync(worker.Id, now + 122_000));
+    }
 }

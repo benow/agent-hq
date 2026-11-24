@@ -4,6 +4,17 @@ The repository's accumulated lessons. Consult when drafting verification criteri
 deciding how to avoid known mistakes. Append new lessons at the top; one lesson per entry, with
 the date and the evidence that taught it.
 
+- **2026-11-22 — A lease has two halves; test the expiry half too.** Part 3 shipped a 60 s
+  command lease. The suite proved "a leased envelope is not returned again before expiry" and
+  the conformance kit's check was described as "lease redelivery inputs", but no code path and
+  no test redelivered an *expired* lease: `ClaimAsync` selects `WHERE lease_until IS NULL` in
+  both stores, the `now` argument it receives is unused, and nothing but a result clears the
+  lease — so a crashed spoke's command is lost permanently while the docs and rule 4 said
+  "expiry redelivers". Evidence: a probe enqueued, claimed, backdated `lease_until` five
+  minutes, and claimed again — 0 envelopes. A check whose name promises a behaviour it never
+  asserts hides a missing implementation better than no check does. For any timeout or
+  visibility window, assert both sides: too early → withheld, past the deadline → redelivered.
+
 - **2026-11-16 — The 128-inotify budget bites the suite once a second host-per-class fixture
   lands.** With `PostgresHubTests` added (one in-memory host per test, real watchers), the full
   suite intermittently fails 1–2 watcher-heavy tests (e.g. ExchangeTests) with `IOException:
