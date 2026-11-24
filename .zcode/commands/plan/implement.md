@@ -1,4 +1,4 @@
-<!-- agent-hq v2 -->
+<!-- agent-hq v3 -->
 ---
 name: plan:implement
 description: Implement the plan — all code work in its worktree, self-verify, claim completion with evidence

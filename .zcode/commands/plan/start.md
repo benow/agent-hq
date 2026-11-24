@@ -1,4 +1,4 @@
-<!-- agent-hq v2 -->
+<!-- agent-hq v3 -->
 ---
 name: plan:start
 description: Start a plan — draft it on main, create its namesake worktree, keep Agent HQ tracking it
