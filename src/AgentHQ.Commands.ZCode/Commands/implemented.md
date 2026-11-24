@@ -1,4 +1,4 @@
-<!-- agent-hq v2 -->
+<!-- agent-hq v3 -->
 ---
 description: Claim completion of a plan with evidence
 ---

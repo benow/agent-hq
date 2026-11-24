@@ -4,6 +4,17 @@ The repository's accumulated lessons. Consult when drafting verification criteri
 deciding how to avoid known mistakes. Append new lessons at the top; one lesson per entry, with
 the date and the evidence that taught it.
 
+- **2026-11-23 — A plan that fails verify twice is a verification-method defect, not new
+  evidence.** Part 3 failed verification three times; each pass tested one half of a
+  behaviour and credited the other, and the second pass accused the code of a bug the
+  contract did not have (a live lease is leased, not queued — `commandsPending` counts
+  un-leased envelopes). Before running anything, map every criterion to the named test that
+  proves it, and run those by name; when a test fails, check the contract line the criterion
+  cites before recording a FAIL; mutation-check any new load-bearing test (break the code,
+  watch it go red, restore). And a `verified` plan is not landed: `/plan done` merges, pushes,
+  archives and cleans up, and the operator asking for it is the gate — never stop between
+  `verified` and `done` to ask again.
+
 - **2026-11-22 — A lease has two halves; test the expiry half too.** Part 3 shipped a 60 s
   command lease. The suite proved "a leased envelope is not returned again before expiry" and
   the conformance kit's check was described as "lease redelivery inputs", but no code path and

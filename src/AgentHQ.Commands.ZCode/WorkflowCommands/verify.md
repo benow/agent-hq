@@ -1,4 +1,4 @@
-<!-- agent-hq v2 -->
+<!-- agent-hq v3 -->
 ---
 name: plan:verify
 description: Adversarially verify the plan — re-run every automatable check, record per-criterion evidence, deliver a verdict
@@ -35,6 +35,26 @@ compensate: treat the implementation report as a claim, not evidence.
 
 ## 3. Work each criterion
 For every Verification Criterion (and every plan commitment lacking one):
+- **First: build the criterion → test map.** Before running anything, write
+  a table in your working notes: every criterion → the named test(s) that
+  prove it (`sqlite-xunit` filter), plus the Postgres/live equivalent where
+  the criterion is store-level. Run the mapped tests by name. A criterion
+  whose coverage you can only DESCRIBE is not covered — it is a gap, and this
+  is the single most expensive lesson in this repository (part 3 failed
+  verification three times because each pass checked one half of a behaviour
+  and credited the other; a second failure of the same criterion is a
+  method defect, not new evidence).
+- **A failing expectation is not automatically a code failure.** When a test
+  fails, establish what is wrong before recording a FAIL: read the contract
+  line the criterion cites. If the expected value contradicts the contract,
+  the test (or your reading of it) is wrong — say so, cite the line, and fix
+  the test in the plan's fix cycle rather than reporting a defect that does
+  not exist. Part 3's second verify accused the code of a bug the contract
+  did not have.
+- **A behaviour test must be mutation-checked when it is new or load-bearing.**
+  Break the behaviour in the code (a one-line revert), confirm the test goes
+  red, restore. A test that passes against a broken implementation is worse
+  than no test: it is a false PASS.
 - Automatable → RUN it yourself: the tests, builds, greps, API probes the
   criterion names. Never trust a green claim — re-run it and record the
   actual output (trimmed to the verdict lines).
@@ -55,8 +75,12 @@ sign-off) → PASS/FAIL/PENDING-user. Commit with an explicit pathspec.
 
 ## 5. Verdict
 - **All PASS** (user items signed off) → `/plan pass docs/plans/<name>.md`
-  records `verifying → verified`.
-  `Next: /plan done docs/plans/<name>.md` — the user's gate.
+  records `verifying → verified`, then `/plan done docs/plans/<name>.md` to
+  land it — do NOT stop and ask "merge or not?" between the two. `done` is
+  the operator's gate, and typing `verified` is not it: a verified plan that
+  is left unmerged and unarchived is an unfinished job, and asking again
+  after the operator already asked for it is a defect. `done` performs the
+  merge, the push, the archive and the cleanup (its template, step 7).
 - **Any FAIL or declined user item** → `/plan fail docs/plans/<name>.md
   <reason>` records `verifying → fixing`; the reason is the failure summary.
   Classify each failure: a foreseeable oversight becomes a drafted lesson in

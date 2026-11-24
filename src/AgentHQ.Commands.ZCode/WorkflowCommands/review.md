@@ -1,4 +1,4 @@
-<!-- agent-hq v2 -->
+<!-- agent-hq v3 -->
 ---
 name: plan:review
 description: Review the plan — hunt gaps, inconsistencies and trip hazards, rewrite it with fixes
